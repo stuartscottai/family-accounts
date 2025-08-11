@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Family Accounts — GitHub Edition</title>
+  <title>Family Accounts — Updated</title>
   <style>
     :root{
       --bg:#f6f8fb; --card:#ffffff; --muted:#64748b; --text:#0f172a;
@@ -13,10 +13,22 @@
     html,body{height:100%}
     body{margin:0;background:linear-gradient(180deg,#f8fafc,#ffffff);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,Inter,Arial,sans-serif}
     .wrap{max-width:980px;margin:0 auto;padding:16px}
-    .header{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+
+    /* Header (clean text only) */
+    .header{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap; padding-bottom:10px; border-bottom:1px solid var(--border)}
     .title{font-size:22px;font-weight:700;letter-spacing:.3px}
+    .header-right{display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px}
+
     .small{font-size:12px;color:var(--muted)}
-    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:14px;box-shadow:0 8px 24px rgba(2,6,23,.06)}
+    .stack{display:flex;flex-direction:column;gap:16px}
+
+    .card{background:var(--card);border:1px solid var(--border);border-radius:16px;box-shadow:0 8px 24px rgba(2,6,23,.06)}
+    .card-header{display:flex;align-items:center;justify-content:space-between;padding:14px 14px;cursor:pointer;user-select:none}
+    .card-title{font-weight:700;margin:0}
+    .chev{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;transition:transform .2s ease}
+    .card.collapsed .chev{transform:rotate(-90deg)}
+    .card-content{padding:0 14px 14px 14px}
+
     .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
     .col{display:flex;flex-direction:column;gap:8px}
     label{font-size:12px;color:var(--muted)}
@@ -32,9 +44,6 @@
     .chips{display:flex;gap:8px;flex-wrap:wrap}
     .chip{background:var(--chip);color:#1e3a8a;padding:8px 10px;border-radius:999px;border:1px solid #dbeafe;display:inline-flex;align-items:center;gap:8px}
     .chip .x{cursor:pointer;opacity:.8}
-    .section-title{font-weight:700;margin:2px 0 8px 0}
-    .grid{display:grid;grid-template-columns:1fr;gap:12px}
-    @media(min-width:720px){.grid{grid-template-columns:1fr 1fr}}
     table{width:100%;border-collapse:collapse;background:#fff}
     th,td{border-bottom:1px solid var(--border);padding:10px 8px;text-align:left;font-size:14px}
     th{color:var(--muted);font-weight:600;background:#f8fafc}
@@ -47,13 +56,10 @@
     .pill.bad{background:#fef2f2;color:#7f1d1d}
     .muted{color:var(--muted)}
     .right{margin-left:auto}
-    .spacer{height:10px}
     .footer{color:var(--muted);text-align:center;margin:16px 0 24px}
     .note{font-size:12px;color:var(--muted)}
     .big{font-size:20px;font-weight:800}
-    .status{font-size:12px;color:var(--muted)}
-    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;background:#f1f5f9;border:1px solid var(--border);border-radius:6px;padding:2px 6px}
-    .modeBadge{font-size:12px;padding:6px 10px;border-radius:999px;border:1px solid var(--border);background:#f8fafc}
+
     details{border:1px solid var(--border); border-radius:12px; background:#fff; padding:10px 12px}
     summary{font-weight:700; cursor:pointer; list-style:none}
     summary::-webkit-details-marker{display:none}
@@ -65,210 +71,222 @@
   <div class="wrap">
     <div class="header">
       <div class="title">🏦 Family Accounts</div>
-      <div class="row">
-        <button class="btn alt" id="undoBtn" type="button" title="Undo last action">Undo</button>
-        <div class="modeBadge" id="modeBadge">Mode: Local storage</div>
-        <div class="col" style="min-width:160px">
-          <label for="month">Month</label>
-          <input type="month" id="month" />
-        </div>
-        <div class="col">
-          <label>Last edited</label>
-          <div class="small" id="lastEdited">—</div>
-        </div>
+      <div class="header-right">
+        <span id="modeBadge">Mode: Local storage</span>
+        <span>•</span>
+        <span>Last edited: <span id="lastEdited">—</span></span>
       </div>
     </div>
 
-    <div class="spacer"></div>
-
-    <!-- Collapsible: File options -->
-    <details>
-      <summary>
-        <div class="summary-row">
-          <span>File options</span>
-          <span class="tag" id="fileStatus">Local-only (no file)</span>
-        </div>
-      </summary>
-      <div class="spacer"></div>
-      <div class="row">
-        <button class="btn" id="chooseFileBtn" type="button">Choose / Open data file</button>
-        <button class="btn ghost" id="createFileBtn" type="button">Create new data file</button>
-        <button class="btn ghost" id="reopenBtn" type="button">Reopen last file</button>
-        <button class="btn alt" id="importBtn" type="button">Import JSON (backup)</button>
-        <input type="file" id="importInput" accept="application/json" style="display:none" />
-        <button class="btn alt" id="exportBtn" type="button">Export JSON (backup)</button>
-      </div>
-      <div class="note">Tip: If you use a Drive JSON here, the app autosaves to it. Otherwise it saves locally in this browser. Export creates a full backup of all months.</div>
-    </details>
-
-    <div class="spacer"></div>
-
-    
-    <div class="spacer"></div>
-    <div class="card">
-      <div class="section-title">Copy people & categories from another month</div>
-      <div class="row">
-        <div class="col" style="min-width:220px;flex:1">
-          <label for="copySourceMonth">Source month</label>
-          <select id="copySourceMonth"></select>
-        </div>
-        <button class="btn alt" id="copyMergeBtn" type="button" title="Keep current + add new from source">Copy (Merge)</button>
-        <button class="btn ghost" id="copyOverwriteBtn" type="button" title="Replace current with source">Copy (Overwrite)</button>
-      </div>
-      <div class="note">Only people & categories are copied. Expenses are not changed.</div>
-    </div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="section-title">People</div>
-        <div class="row">
-          <input id="personName" type="text" placeholder="e.g., Stuart" inputmode="text" autocomplete="off" />
-          <button class="btn" id="addPersonBtn" type="button">Add person</button>
-        </div>
-        <div class="chips" id="peopleChips"></div>
-      </div>
-
-      <div class="card">
-        <div class="section-title">Categories</div>
-        <div class="row">
-          <input id="categoryName" type="text" placeholder="e.g., Groceries" />
-          <button class="btn" id="addCategoryBtn" type="button">Add category</button>
-        </div>
-        <div class="chips" id="categoriesChips"></div>
-      </div>
-    </div>
-
-    <div class="spacer"></div>
-
-    <div class="card">
-      <div class="section-title">Add expenses</div>
-      <div class="seg" style="margin-bottom:10px">
-        <button id="modeQuick" class="active" type="button">Quick add (same category)</button>
-        <button id="modeBatch" type="button">Batch add (multiple categories)</button>
-      </div>
-
-      <div id="quickPanel">
-        <div class="row">
-          <div class="col" style="min-width:160px;flex:1">
-            <label>Person</label>
-            <select id="quickPerson"></select>
+    <div class="stack" style="margin-top:14px">
+      <!-- Collapsible: File options -->
+      <details>
+        <summary>
+          <div class="summary-row">
+            <span>File options</span>
+            <span class="tag" id="fileStatus">Local-only (no file)</span>
           </div>
-          <div class="col" style="min-width:160px;flex:1">
-            <label>Category</label>
-            <select id="quickCategory"></select>
+        </summary>
+        <div class="row" style="margin-top:8px">
+          <button class="btn" id="chooseFileBtn" type="button">Choose / Open data file</button>
+          <button class="btn ghost" id="createFileBtn" type="button">Create new data file</button>
+          <button class="btn ghost" id="reopenBtn" type="button">Reopen last file</button>
+          <button class="btn alt" id="importBtn" type="button">Import JSON (backup)</button>
+          <input type="file" id="importInput" accept="application/json" style="display:none" />
+          <button class="btn alt" id="exportBtn" type="button">Export JSON (backup)</button>
+        </div>
+        <div class="note">Tip: If you use a Drive JSON here, the app autosaves to it. Otherwise it saves locally in this browser. Export creates a full backup of all months.</div>
+      </details>
+
+      <!-- NEW: Month picker in its own box -->
+      <div class="card" data-section="month">
+        <div class="card-header"><div class="card-title">Month</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div class="col" style="max-width:220px">
+            <label for="month">Select month</label>
+            <input type="month" id="month" />
           </div>
         </div>
-        <div class="row">
-          <div class="col" style="flex:1">
-            <label>Amounts (comma / space / new line separated)</label>
-            <textarea id="quickAmounts" placeholder="e.g., 12.50, 7, 19.99"></textarea>
-            <div class="note">Tip: you can paste many numbers, one per line. Both "," and "." work as decimals.</div>
+      </div>
+
+      <div class="card" data-section="copy">
+        <div class="card-header">
+          <div class="card-title">Copy people & categories from another month</div>
+          <div class="chev">▸</div>
+        </div>
+        <div class="card-content">
+          <div class="row">
+            <div class="col" style="min-width:220px;flex:1">
+              <label for="copySourceMonth">Source month</label>
+              <select id="copySourceMonth"></select>
+            </div>
+            <button class="btn alt" id="copyMergeBtn" type="button" title="Keep current + add new from source">Copy (Merge)</button>
+            <button class="btn ghost" id="copyOverwriteBtn" type="button" title="Replace current with source">Copy (Overwrite)</button>
+          </div>
+          <div class="note">Only people & categories are copied. Expenses are not changed.</div>
+        </div>
+      </div>
+
+      <div class="card" data-section="people">
+        <div class="card-header"><div class="card-title">People</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div class="row">
+            <input id="personName" type="text" placeholder="e.g., Stuart" inputmode="text" autocomplete="off" />
+            <button class="btn" id="addPersonBtn" type="button">Add person</button>
+          </div>
+          <div class="chips" id="peopleChips"></div>
+        </div>
+      </div>
+
+      <div class="card" data-section="categories">
+        <div class="card-header"><div class="card-title">Categories</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div class="row">
+            <input id="categoryName" type="text" placeholder="e.g., Groceries" />
+            <button class="btn" id="addCategoryBtn" type="button">Add category</button>
+          </div>
+          <div class="chips" id="categoriesChips"></div>
+        </div>
+      </div>
+
+      <div class="card" data-section="add-expenses">
+        <div class="card-header"><div class="card-title">Add expenses</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div class="seg" style="margin-bottom:10px">
+            <button id="modeQuick" class="active" type="button">Quick add (same category)</button>
+            <button id="modeBatch" type="button">Batch add (multiple categories)</button>
+          </div>
+
+          <div id="quickPanel">
+            <div class="row">
+              <div class="col" style="min-width:160px;flex:1">
+                <label>Payer</label>
+                <select id="quickPerson"></select>
+              </div>
+              <div class="col" style="min-width:160px;flex:1">
+                <label>Category</label>
+                <select id="quickCategory"></select>
+              </div>
+              <div class="col" style="min-width:180px;flex:1">
+                <label>Split</label>
+                <select id="quickSplit"></select>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col" style="flex:1">
+                <label>Amounts (comma / space / new line separated)</label>
+                <textarea id="quickAmounts" placeholder="e.g., 12.50, 7, 19.99"></textarea>
+                <div class="note">Tip: paste many numbers, one per line. Both "," and "." work as decimals.</div>
+              </div>
+            </div>
+            <div class="row">
+              <div class="col" style="flex:1">
+                <label>Note (optional, applied to all)</label>
+                <input id="quickNote" type="text" placeholder="e.g., supermarket run" />
+              </div>
+            </div>
+            <div class="row">
+              <button class="btn" id="addQuickBtn" type="button">Add expense(s)</button>
+              <button class="btn ghost" id="clearQuickBtn" type="button">Clear</button>
+            </div>
+          </div>
+
+          <div id="batchPanel" style="display:none">
+            <div class="row">
+              <div class="col" style="min-width:160px;flex:1">
+                <label>Payer</label>
+                <select id="batchPerson"></select>
+              </div>
+              <div class="col" style="min-width:180px;flex:1">
+                <label>Split</label>
+                <select id="batchSplit"></select>
+              </div>
+            </div>
+            <div id="batchRows"></div>
+            <div class="row">
+              <button class="btn alt" id="addBatchRowBtn" type="button">+ Add another line</button>
+              <div class="right"></div>
+              <button class="btn" id="saveBatchBtn" type="button">Save all lines</button>
+              <button class="btn ghost" id="clearBatchBtn" type="button">Clear lines</button>
+            </div>
+            <div class="note">Each line: choose a category and enter amount. Split applies to all lines here.</div>
           </div>
         </div>
-        <div class="row">
-          <div class="col" style="flex:1">
-            <label>Note (optional, applied to all quick-added amounts)</label>
-            <input id="quickNote" type="text" placeholder="e.g., supermarket run" />
-          </div>
-          </div>
-        </div>
-        <div class="sticky-bar">
-          <button class="btn" id="addQuickBtn" type="button">Add expense(s)</button>
-          <button class="btn ghost" id="clearQuickBtn" type="button">Clear</button>
-        </div>
       </div>
 
-      <div id="batchPanel" style="display:none">
-        <div class="row">
-          <div class="col" style="min-width:160px;flex:1">
-            <label>Person</label>
-            <select id="batchPerson"></select>
+      <div class="card" data-section="all-expenses">
+        <div class="card-header">
+          <div class="card-title">All expenses</div>
+          <div class="row">
+            <button class="btn warn" id="clearMonthBtn" type="button">Clear this month’s expenses</button>
+            <div class="chev">▸</div>
           </div>
         </div>
-        <div id="batchRows"></div>
-        <div class="row">
-          <button class="btn alt" id="addBatchRowBtn" type="button">+ Add another line</button>
-          <div class="right"></div>
-          <button class="btn" id="saveBatchBtn" type="button">Save all lines</button>
-          <button class="btn ghost" id="clearBatchBtn" type="button">Clear lines</button>
-        </div>
-        <div class="note">Each line: choose a category and enter amount. Add as many lines as you like for the same person, then tap "Save all lines".</div>
-      </div>
-    </div>
-
-    <div class="spacer"></div>
-
-    <div class="card">
-      <div class="row" style="justify-content:space-between;align-items:center">
-        <div class="section-title">All expenses</div>
-        <button class="btn warn" id="clearMonthBtn" type="button">Clear this month’s expenses</button>
-      </div>
-      <div class="row" style="justify-content:space-between">
-        <div class="muted">Tap 🗑️ to remove a line</div>
-      </div>
-      <div id="expensesEmpty" class="muted" style="padding:6px 0 12px">No expenses yet.</div>
-      <div style="overflow:auto">
-        <table id="expensesTable" style="display:none">
-          <thead>
-            <tr><th>#</th><th>Person</th><th>Category</th><th>Note</th><th>Amount</th><th></th></tr>
-          </thead>
-          <tbody id="expensesBody"></tbody>
-          <tfoot>
-            <tr><td colspan="3">Total</td><td id="totalCell">€0.00</td><td></td></tr>
-          </tfoot>
-        </table>
-      </div>
-    </div>
-
-    <div class="spacer"></div>
-
-    <div class="grid">
-      <div class="card">
-        <div class="section-title">Totals by person</div>
-        <div id="totalsPeople"></div>
-      </div>
-      <div class="card">
-        <div class="section-title">Totals by category</div>
-        <div id="totalsCategories"></div>
-      </div>
-    </div>
-
-    <div class="spacer"></div>
-
-    <div class="card">
-      <div class="section-title">Who owes who</div>
-      <div id="settlements"></div>
-      <div class="note">Everyone should pay an equal share of the month’s total. Positive balances are owed money; negative balances owe money.</div>
-    </div>
-
-    <div class="spacer"></div>
-
-    <div class="card">
-      <div class="section-title">Averages</div>
-      <div class="row">
-        <div class="col">
-          <label>Average monthly spend — YTD</label>
-          <div id="avgYTD" class="big">€0.00</div>
-        </div>
-        <div class="col">
-          <label>Average monthly spend — All saved months</label>
-          <div id="avgAll" class="big">€0.00</div>
+        <div class="card-content">
+          <div class="row" style="justify-content:space-between">
+            <div class="muted">Tap 🗑️ to remove a line</div>
+          </div>
+          <div id="expensesEmpty" class="muted" style="padding:6px 0 12px">No expenses yet.</div>
+          <div style="overflow:auto">
+            <table id="expensesTable" style="display:none">
+              <thead>
+                <tr><th>#</th><th>Payer</th><th>Category</th><th>Note</th><th>Amount</th><th>Split</th><th></th></tr>
+              </thead>
+              <tbody id="expensesBody"></tbody>
+              <tfoot>
+                <tr><td colspan="4">Total</td><td id="totalCell">€0.00</td><td></td><td></td></tr>
+              </tfoot>
+            </table>
+          </div>
         </div>
       </div>
-      <div class="spacer"></div>
-      <div class="grid">
-        <div>
-          <div class="section-title">Average by category — YTD</div>
-          <div id="avgCatYTD"></div>
-        </div>
-        <div>
-          <div class="section-title">Average by category — All</div>
-          <div id="avgCatAll"></div>
+
+      <div class="card" data-section="totals-people">
+        <div class="card-header"><div class="card-title">Totals by person</div><div class="chev">▸</div></div>
+        <div class="card-content"><div id="totalsPeople"></div></div>
+      </div>
+
+      <div class="card" data-section="totals-categories">
+        <div class="card-header"><div class="card-title">Totals by category</div><div class="chev">▸</div></div>
+        <div class="card-content"><div id="totalsCategories"></div></div>
+      </div>
+
+      <div class="card" data-section="settlements">
+        <div class="card-header"><div class="card-title">Who owes who</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div id="settlements"></div>
+          <div class="note">Everyone should pay an equal share of the month’s total. Positive balances are owed money; negative balances owe money.</div>
         </div>
       </div>
-    </div>
 
-    <div class="footer">stuartscottAI</div>
+      <div class="card" data-section="averages">
+        <div class="card-header"><div class="card-title">Averages</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div class="row">
+            <div class="col">
+              <label>Average monthly spend — YTD</label>
+              <div id="avgYTD" class="big">€0.00</div>
+            </div>
+            <div class="col">
+              <label>Average monthly spend — All saved months</label>
+              <div id="avgAll" class="big">€0.00</div>
+            </div>
+          </div>
+          <div class="row" style="margin-top:10px">
+            <div class="col" style="flex:1">
+              <div class="card-title" style="font-weight:700">Average by category — YTD</div>
+              <div id="avgCatYTD"></div>
+            </div>
+            <div class="col" style="flex:1">
+              <div class="card-title" style="font-weight:700">Average by category — All</div>
+              <div id="avgCatAll"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer">stuartscottAI</div>
+    </div>
   </div>
 
   <script>
@@ -291,12 +309,15 @@
     const batchPanel = document.getElementById('batchPanel');
 
     const quickPerson = document.getElementById('quickPerson');
+    theQuickCategory = document.getElementById('quickCategory'); // keep old id name; variable name typo fixed below
     const quickCategory = document.getElementById('quickCategory');
+    const quickSplit = document.getElementById('quickSplit');
     const quickAmounts = document.getElementById('quickAmounts');
     const addQuickBtn = document.getElementById('addQuickBtn');
     const clearQuickBtn = document.getElementById('clearQuickBtn');
 
     const batchPerson = document.getElementById('batchPerson');
+    const batchSplit = document.getElementById('batchSplit');
     const batchRows = document.getElementById('batchRows');
     const addBatchRowBtn = document.getElementById('addBatchRowBtn');
     const saveBatchBtn = document.getElementById('saveBatchBtn');
@@ -329,54 +350,6 @@
     const importInput = document.getElementById('importInput');
 
     // ---------- App state ----------
-    // ---------- Undo history ----------
-    let __history = [];
-    const __HISTORY_LIMIT = 50;
-    function snapshotAll() {
-      // Capture all local famacct:* months
-      const locals = {};
-      for (let i=0;i<localStorage.length;i++){
-        const k = localStorage.key(i);
-        if(k && k.startsWith('famacct:')) { locals[k] = localStorage.getItem(k); }
-      }
-      // Capture file months if any
-      const fileMonths = fileHandle ? JSON.stringify(fileData.months||{}) : null;
-      return JSON.stringify({locals, fileMonths, fileMode: !!fileHandle, currentMonth: monthEl.value});
-    }
-    function pushHistory(){
-      const snap = snapshotAll();
-      __history.push(snap);
-      if(__history.length > __HISTORY_LIMIT) __history.shift();
-    }
-    async function undoLastAction(){
-      if(!__history.length){ alert('Nothing to undo.'); return; }
-      const raw = __history.pop();
-      try{
-        const {locals, fileMonths, fileMode, currentMonth} = JSON.parse(raw);
-        // Restore locals
-        // First clear existing famacct:* to avoid leftovers
-        const toRemove = [];
-        for (let i=0;i<localStorage.length;i++){
-          const k = localStorage.key(i);
-          if(k && k.startsWith('famacct:')) toRemove.push(k);
-        }
-        for(const k of toRemove) localStorage.removeItem(k);
-        for(const [k,v] of Object.entries(locals)) localStorage.setItem(k, v);
-        // Restore file months only if file mode matches current state and we have a handle
-        if(fileMode && fileHandle && fileMonths){
-          try{ fileData.months = JSON.parse(fileMonths) || {}; }catch{ fileData.months = {}; }
-          try{ await writeFileJSON(fileHandle, fileData); }catch{}
-        }
-        await loadFromFileOrLocal(currentMonth);
-        lastLoadedMonth = currentMonth;
-        monthEl.value = currentMonth;
-        renderAll(); renderAverages(); updateFileStatus();
-      }catch(e){
-        console.error('Undo failed', e);
-        alert('Undo failed. Sorry!');
-      }
-    }
-
     let data = null; // current month data
     let fileHandle = null; // FileSystemFileHandle
     let fileData = { months: {} }; // consolidated months when using a file
@@ -410,10 +383,29 @@
       const min = String(d.getMinutes()).padStart(2,'0');
       return `${dd}/${mm}/${yyyy} ${HH}:${min}`;
     }
-    function setLastEditedNow(){
-      if(data){ data.lastEdited = new Date().toISOString(); renderLastEdited(); }
-    }
+    function setLastEditedNow(){ if(data){ data.lastEdited = new Date().toISOString(); renderLastEdited(); } }
     function renderLastEdited(){ lastEditedEl.textContent = formatUK(data?.lastEdited); }
+
+    // ---------- Collapsible cards ----------
+    const COLLAPSE_KEY = 'famacct:collapsed';
+    function loadCollapsed(){ try{ return JSON.parse(localStorage.getItem(COLLAPSE_KEY)||'{}'); }catch{return {}}; }
+    function saveCollapsed(obj){ try{ localStorage.setItem(COLLAPSE_KEY, JSON.stringify(obj)); }catch{} }
+    function setupCollapsibles(){
+      const state = loadCollapsed();
+      document.querySelectorAll('.card[data-section]').forEach(card=>{
+        const key = card.getAttribute('data-section');
+        const header = card.querySelector('.card-header');
+        const content = card.querySelector('.card-content');
+        const collapsed = !!state[key];
+        if(collapsed){ card.classList.add('collapsed'); content.style.display = 'none'; }
+        header.addEventListener('click', (e)=>{
+          if(e.target.closest('button')) return; // don’t collapse when clicking a button inside header
+          const now = card.classList.toggle('collapsed');
+          content.style.display = now ? 'none' : 'block';
+          const st = loadCollapsed(); st[key] = now ? 1 : 0; saveCollapsed(st);
+        });
+      });
+    }
 
     // ---------- Storage: Local ----------
     function localLoadMonth(month){
@@ -467,10 +459,7 @@
     function idbOpen(){
       return new Promise((resolve, reject)=>{
         const req = indexedDB.open(HANDLE_DB, 1);
-        req.onupgradeneeded = ()=>{
-          const db = req.result;
-          if(!db.objectStoreNames.contains('handles')) db.createObjectStore('handles');
-        };
+        req.onupgradeneeded = ()=>{ const db = req.result; if(!db.objectStoreNames.contains('handles')) db.createObjectStore('handles'); };
         req.onsuccess = ()=>resolve(req.result);
         req.onerror = ()=>reject(req.error);
       });
@@ -530,7 +519,6 @@
       renderAverages();
     }
 
-    
     // ---------- Copy people & categories from another month ----------
     function uniqueList(arr){ return Array.from(new Set((arr||[]).map(s=>String(s).trim()).filter(Boolean))); }
     function populateCopySource(){
@@ -546,12 +534,10 @@
       if(srcMonth === monthEl.value){ alert('Source and current month are the same'); return; }
       const src = getMonthData(srcMonth);
       if(!src){ alert('No data found for that month'); return; }
-      // Only people & categories
       const srcPeople = uniqueList(src.people||[]);
       const srcCats = uniqueList(src.categories||[]);
       if(mode === 'overwrite'){
-        data.people = srcPeople;
-        data.categories = srcCats;
+        data.people = srcPeople; data.categories = srcCats;
       }else{
         data.people = uniqueList([...(data.people||[]), ...srcPeople]);
         data.categories = uniqueList([...(data.categories||[]), ...srcCats]);
@@ -560,24 +546,66 @@
       alert('Copied ' + (mode==='overwrite'?'(overwrite)':'(merge)') + ' from ' + srcMonth);
     }
 
+    // ---------- Split helpers ----------
+    function buildSplitOptions(selectEl){
+      const ppl = data.people || [];
+      selectEl.innerHTML='';
+      if(ppl.length === 2){
+        const [a,b] = ppl;
+        [[`50_50`,`50/50`],[`100_${a}`,`${a} 100%`],[`100_${b}`,`${b} 100%`]].forEach(([v,l])=>{
+          const o=document.createElement('option'); o.value=v; o.textContent=l; selectEl.appendChild(o);
+        });
+      } else {
+        const o1=document.createElement('option'); o1.value='equal_all'; o1.textContent='Equal among all people'; selectEl.appendChild(o1);
+        const o2=document.createElement('option'); o2.value='payer_100'; o2.textContent='Payer 100%'; selectEl.appendChild(o2);
+      }
+    }
+    function computeSplitsFromChoice(choice, payer){
+      const ppl = data.people || [];
+      const splits = {};
+      if(ppl.length === 2){
+        const [a,b] = ppl;
+        if(choice==='50_50'){ splits[a]=50; splits[b]=50; }
+        else if(choice===`100_${a}`){ splits[a]=100; splits[b]=0; }
+        else if(choice===`100_${b}`){ splits[a]=0; splits[b]=100; }
+        else { splits[a]=50; splits[b]=50; }
+      } else {
+        if(choice==='payer_100' && payer){ ppl.forEach(p=>splits[p]= (p===payer?100:0)); }
+        else { // equal_all
+          const share = Math.floor(100/ppl.length);
+          let sum=0; for(let i=0;i<ppl.length;i++){ splits[ppl[i]] = (i===ppl.length-1) ? 100-sum : share; sum+=share; }
+        }
+      }
+      return splits;
+    }
+    function splitsToLabel(splits){
+      const parts = Object.entries(splits||{}).filter(([_,v])=>v>0).map(([k,v])=>`${k} ${v}%`);
+      return parts.join(' / ') || '—';
+    }
+
     // ---------- Computations & Rendering ----------
     function computeTotals(){
-      const perPerson = Object.fromEntries(data.people.map(p=>[p,0]));
-      const perCategory = Object.fromEntries(data.categories.map(c=>[c,0]));
+      const perPerson = Object.fromEntries((data.people||[]).map(p=>[p,0]));
+      const perCategory = Object.fromEntries((data.categories||[]).map(c=>[c,0]));
       let grand=0;
-      for(const e of data.expenses){
-        if(perPerson[e.person]===undefined) perPerson[e.person]=0;
-        if(perCategory[e.category]===undefined) perCategory[e.category]=0;
-        perPerson[e.person]+=e.amount;
-        perCategory[e.category]+=e.amount;
-        grand+=e.amount;
+      for(const e of (data.expenses||[])){
+        const amount = +e.amount || 0;
+        const payer = e.payer || e.person || '';
+        const splits = e.splits || {[payer]:100};
+        for(const [p, pct] of Object.entries(splits)){
+          if(!(p in perPerson)) perPerson[p]=0;
+          perPerson[p] += round2(amount * (pct||0)/100);
+        }
+        if(!(e.category in perCategory)) perCategory[e.category]=0;
+        perCategory[e.category]+= amount;
+        grand+= amount;
       }
       perPerson.__total = round2(grand);
       return {perPerson, perCategory};
     }
     function renderPeopleCats(){
       peopleChips.innerHTML = '';
-      for(const p of data.people){
+      for(const p of (data.people||[])){
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+p+'</span><span class="x" title="Remove">✖</span>';
@@ -585,20 +613,22 @@
         peopleChips.appendChild(c);
       }
       categoriesChips.innerHTML = '';
-      for(const cName of data.categories){
+      for(const cName of (data.categories||[])){
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+cName+'</span><span class="x" title="Remove">✖</span>';
         c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category "'+cName+'" and related expenses?')) { removeCategory(cName); }});
         categoriesChips.appendChild(c);
       }
-      fillSelect(quickPerson, data.people);
-      fillSelect(quickCategory, data.categories);
-      fillSelect(batchPerson, data.people);
-      [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, data.categories));
+      fillSelect(quickPerson, (data.people||[]));
+      fillSelect(quickCategory, (data.categories||[]));
+      fillSelect(batchPerson, (data.people||[]));
+      buildSplitOptions(quickSplit);
+      buildSplitOptions(batchSplit);
+      [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, (data.categories||[])));
     }
     function renderExpenses(){
-      if(!data.expenses.length){
+      if(!(data.expenses||[]).length){
         expensesEmpty.style.display='block';
         expensesTable.style.display='none';
         totalCell.textContent = euro(0);
@@ -609,11 +639,13 @@
       expensesTable.style.display='table';
       expensesBody.innerHTML = '';
       let i=1, total=0;
-      for(const [idx,e] of data.expenses.entries()){
-        total += e.amount;
+      for(const [idx,e] of (data.expenses||[]).entries()){
+        total += (+e.amount||0);
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td>'+ (i++) +'</td><td>'+e.person+'</td><td>'+e.category+'</td><td>'+(e.note?String(e.note).replace(/</g,'&lt;'):'')+'</td><td>'+euro(e.amount)+'</td><td><button class="btn ghost" title="Delete" data-i="'+idx+'" type="button">🗑️</button></td>';
-        tr.querySelector('button').addEventListener('click',()=>{ data.expenses.splice(idx,1); save(); renderAll(); });
+        const payer = e.payer || e.person || '';
+        const splitTxt = splitsToLabel(e.splits||{[payer]:100});
+        tr.innerHTML = '<td>'+ (i++) +'</td><td>'+payer+'</td><td>'+e.category+'</td><td>'+(e.note?String(e.note).replace(/</g,'&lt;'):'')+'</td><td>'+euro(+e.amount||0)+'</td><td>'+splitTxt+'</td><td><button class="btn ghost" title="Delete" data-i="'+idx+'" type="button">🗑️</button></td>';
+        tr.querySelector('button').addEventListener('click',()=>{ (data.expenses||[]).splice(idx,1); save(); renderAll(); });
         expensesBody.appendChild(tr);
       }
       totalCell.textContent = euro(round2(total));
@@ -622,9 +654,9 @@
       const {perPerson, perCategory} = computeTotals();
       const total = perPerson.__total || 0;
       let htmlP='';
-      if(data.people.length){
-        htmlP += '<table><thead><tr><th>Person</th><th>Total</th></tr></thead><tbody>';
-        for(const p of data.people){
+      if((data.people||[]).length){
+        htmlP += '<table><thead><tr><th>Person</th><th>Total (share)</th></tr></thead><tbody>';
+        for(const p of (data.people||[])){
           htmlP += '<tr><td>'+p+'</td><td>'+euro(round2(perPerson[p]||0))+'</td></tr>';
         }
         htmlP += '</tbody><tfoot><tr><td>All people</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
@@ -632,9 +664,9 @@
       totalsPeople.innerHTML = htmlP;
 
       let htmlC='';
-      if(data.categories.length){
+      if((data.categories||[]).length){
         htmlC += '<table><thead><tr><th>Category</th><th>Total</th></tr></thead><tbody>';
-        for(const c of data.categories){
+        for(const c of (data.categories||[])){
           htmlC += '<tr><td>'+c+'</td><td>'+euro(round2(perCategory[c]||0))+'</td></tr>';
         }
         htmlC += '</tbody><tfoot><tr><td>All categories</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
@@ -643,7 +675,7 @@
     }
     function computeSettlements(){
       const {perPerson} = computeTotals();
-      const people = data.people;
+      const people = (data.people||[]);
       const total = perPerson.__total || 0;
       const n = people.length || 1;
       const share = round2(total / n);
@@ -667,21 +699,20 @@
     }
     function renderSettlements(){
       const {share, balances, transfers} = computeSettlements();
-      if(!data.people.length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
+      if(!(data.people||[]).length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
       let html = '<div class="row"><div>Equal share per person: <strong>'+euro(share)+'</strong></div></div>';
-      html += '<div class="spacer"></div>';
       html += '<table><thead><tr><th>Person</th><th>Balance vs share</th></tr></thead><tbody>';
       for(const b of balances){
         const cls = b.balance>=0? 'ok' : 'bad';
         html += '<tr><td>'+b.person+'</td><td><span class="pill '+cls+'">'+(b.balance>=0?'+':'')+euro(b.balance)+'</span></td></tr>';
       }
       html += '</tbody></table>';
-      html += '<div class="spacer"></div>';
       if(!transfers.length){ html += '<div class="muted">No transfers needed ✅</div>'; }
       else{
-        html += '<div class="section-title">Suggested transfers</div>';
+        html += '<div class="card-title" style="margin:8px 0">Suggested transfers</div>';
         html += '<table><thead><tr><th>From</th><th>To</th><th>Amount</th></tr></thead><tbody>';
         for(const t of transfers){ html += '<tr><td>'+t.from+'</td><td>'+t.to+'</td><td>'+euro(t.amount)+'</td></tr>'; }
+        html += '</tbody></table>';
       }
       settlements.innerHTML = html;
     }
@@ -692,31 +723,28 @@
     function fillSelect(selectEl, items){
       selectEl.innerHTML = '';
       const opt = document.createElement('option'); opt.value=''; opt.textContent='— select —'; selectEl.appendChild(opt);
-      for(const it of items){ const o = document.createElement('option'); o.value=it; o.textContent=it; selectEl.appendChild(o); }
+      for(const it of (items||[])){ const o = document.createElement('option'); o.value=it; o.textContent=it; selectEl.appendChild(o); }
     }
 
     // Averages across months (from local or file)
-    function listSavedMonths(){
-      return fileHandle ? listSavedMonthsFile() : listSavedMonthsLocal();
-    }
+    function listSavedMonths(){ return fileHandle ? listSavedMonthsFile() : listSavedMonthsLocal(); }
     function getMonthData(m){
       if(fileHandle) return fileData.months[m] || defaultData(null);
       const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
-      try{ return JSON.parse(raw); }catch{return defaultData(null);}
-    }
+      try{ return JSON.parse(raw); }catch{return defaultData(null);} }
     function computeAverages(){
       const months = listSavedMonths();
       const allData = months.map(m=>({m, d:getMonthData(m)})).filter(x=>x.d);
       const year = new Date().getFullYear();
       const ytd = allData.filter(x => x.m.startsWith(year + '-'));
       const allMonthsCount = allData.length, ytdMonthsCount = ytd.length;
-      const sumTotal = (arr)=> arr.reduce((s,x)=> s + (x.d.expenses||[]).reduce((a,e)=>a+(e.amount||0),0), 0);
+      const sumTotal = (arr)=> arr.reduce((s,x)=> s + (x.d.expenses||[]).reduce((a,e)=>a+(+e.amount||0),0), 0);
       const totalAll = sumTotal(allData), totalYTD = sumTotal(ytd);
       const avgAllVal = allMonthsCount ? round2(totalAll / allMonthsCount) : 0;
       const avgYTDVal = ytdMonthsCount ? round2(totalYTD / ytdMonthsCount) : 0;
       const catsAllTotals = {}, catsYtdTotals = {}; const catSetAll = new Set(), catSetYTD = new Set();
-      allData.forEach(({d})=>{ (d.categories||[]).forEach(c=>catSetAll.add(c)); (d.expenses||[]).forEach(e=>{ catsAllTotals[e.category]=(catsAllTotals[e.category]||0)+(e.amount||0); }); });
-      ytd.forEach(({d})=>{ (d.categories||[]).forEach(c=>catSetYTD.add(c)); (d.expenses||[]).forEach(e=>{ catsYtdTotals[e.category]=(catsYtdTotals[e.category]||0)+(e.amount||0); }); });
+      allData.forEach(({d})=>{ (d.categories||[]).forEach(c=>catSetAll.add(c)); (d.expenses||[]).forEach(e=>{ catsAllTotals[e.category]=(catsAllTotals[e.category]||0)+(+e.amount||0); }); });
+      ytd.forEach(({d})=>{ (d.categories||[]).forEach(c=>catSetYTD.add(c)); (d.expenses||[]).forEach(e=>{ catsYtdTotals[e.category]=(catsYtdTotals[e.category]||0)+(+e.amount||0); }); });
       const avgCatAllMap = {}, avgCatYTDMap = {};
       for(const c of catSetAll){ avgCatAllMap[c] = allMonthsCount ? round2((catsAllTotals[c]||0)/allMonthsCount) : 0; }
       for(const c of catSetYTD){ avgCatYTDMap[c] = ytdMonthsCount ? round2((catsYtdTotals[c]||0)/ytdMonthsCount) : 0; }
@@ -741,8 +769,6 @@
       if(fileHandle){ fileStatus.textContent = 'File: '+fileHandle.name; }
       else { fileStatus.textContent = 'Local-only (no file)'; }
       setModeBadge();
-
-      // populate copy source on load
       populateCopySource();
     }
 
@@ -752,19 +778,13 @@
       if(fileData.months[m]) return; // file already has it
       const raw = localStorage.getItem(keyFor(m));
       if(!raw) return;
-      try{
-        const local = JSON.parse(raw);
-        fileData.months[m] = local;
-      }catch{}
+      try{ const local = JSON.parse(raw); fileData.months[m] = local; }catch{}
     }
 
     async function chooseOpenFile(){
       try{
         if(!window.showOpenFilePicker){ alert('Your browser does not support this file picker. Use Import JSON instead.'); return; }
-        const [h] = await window.showOpenFilePicker({
-          multiple:false,
-          types:[{description:'JSON', accept:{'application/json':['.json']}}]
-        });
+        const [h] = await window.showOpenFilePicker({ multiple:false, types:[{description:'JSON', accept:{'application/json':['.json']}}] });
         if(!h) return;
         if(!(await ensureRW(h))) { alert('No permission to read/write this file.'); return; }
         fileHandle = h;
@@ -783,13 +803,9 @@
     async function createNewFile(){
       try{
         if(!window.showSaveFilePicker){ alert('Your browser does not support creating files here. Use Export JSON to create one.'); return; }
-        const h = await window.showSaveFilePicker({
-          suggestedName:'family-accounts.json',
-          types:[{description:'JSON', accept:{'application/json':['.json']}}]
-        });
+        const h = await window.showSaveFilePicker({ suggestedName:'family-accounts.json', types:[{description:'JSON', accept:{'application/json':['.json']}}] });
         if(!(await ensureRW(h))) { alert('No permission to write this file.'); return; }
-        fileHandle = h;
-        fileData = {months:{}};
+        fileHandle = h; fileData = {months:{}};
         mergeCurrentMonthLocalIntoFile();
         await writeFileJSON(fileHandle, fileData);
         await idbSet(HANDLE_KEY, fileHandle);
@@ -821,26 +837,16 @@
     // Import / Export
     function importJSON(obj){
       if(obj && obj.months && typeof obj.months === 'object'){
-        // Merge into fileData
         fileData = {months:{...fileData.months, ...obj.months}};
       } else if (obj && (obj.people || obj.categories || obj.expenses)){
         const m = monthEl.value || thisMonthValue();
         fileData.months[m] = obj;
-      } else {
-        alert('This JSON does not look like a Family Accounts export.');
-        return;
-      }
-      // Mirror to localStorage
+      } else { alert('This JSON does not look like a Family Accounts export.'); return; }
       for(const m of Object.keys(fileData.months)){
         try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
       }
-      // If a Drive file is open, also persist into it
-      if(fileHandle){
-        writeFileJSON(fileHandle, fileData).catch(()=>{});
-      }
-      if(fileData.months[monthEl.value]){
-        data = fileData.months[monthEl.value];
-      }
+      if(fileHandle){ writeFileJSON(fileHandle, fileData).catch(()=>{}); }
+      if(fileData.months[monthEl.value]){ data = fileData.months[monthEl.value]; }
       renderAll(); renderAverages();
       alert('Import complete!');
     }
@@ -862,11 +868,8 @@
         const text = await f.text();
         const obj = JSON.parse(String(text).replace(/^\uFEFF/, '').trim());
         importJSON(obj);
-      }catch(err){
-        alert('Could not read that JSON.');
-      } finally {
-        importInput.value = '';
-      }
+      }catch(err){ alert('Could not read that JSON.'); }
+      finally { importInput.value = ''; }
     });
 
     exportBtn.addEventListener('click', ()=>{
@@ -880,22 +883,17 @@
       downloadBlob(out, 'family-accounts-backup.json');
     });
 
-    // ---------- Month switching logic (SAFE) ----------
+    // ---------- Month switching ----------
     async function switchMonthSafely(targetMonth){
       if(targetMonth === lastLoadedMonth) return;
       lastMonthSnapshot = data ? {people:[...(data.people||[])], categories:[...(data.categories||[])]} : null;
-
       if(monthExists(targetMonth)){
         await loadFromFileOrLocal(targetMonth);
       } else {
         const base = lastMonthSnapshot || {people:[], categories:[]};
         const fresh = defaultData(base);
-        if(fileHandle){
-          fileData.months[targetMonth] = fresh;
-          await writeFileJSON(fileHandle, fileData);
-        } else {
-          localStorage.setItem(keyFor(targetMonth), JSON.stringify(fresh));
-        }
+        if(fileHandle){ fileData.months[targetMonth] = fresh; await writeFileJSON(fileHandle, fileData); }
+        else { localStorage.setItem(keyFor(targetMonth), JSON.stringify(fresh)); }
         data = fresh;
       }
       lastLoadedMonth = targetMonth;
@@ -909,27 +907,23 @@
     function setMonthToNow(){ monthEl.value = thisMonthValue(); }
     function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
 
-    function save(){ pushHistory(); setLastEditedNow(); persist(); }
+    function save(){ setLastEditedNow(); persist(); }
     function addPerson(name){
-      name = (name||'').trim();
-      if(!name) return;
-      if(data.people.includes(name)) return;
-      data.people.push(name); save(); renderPeopleCats();
+      name = (name||'').trim(); if(!name) return; if((data.people||[]).includes(name)) return;
+      (data.people = data.people||[]).push(name); save(); renderPeopleCats();
     }
     function removePerson(name){
-      data.people = data.people.filter(p=>p!==name);
-      data.expenses = data.expenses.filter(e=>e.person!==name);
+      data.people = (data.people||[]).filter(p=>p!==name);
+      data.expenses = (data.expenses||[]).filter(e=>e.payer!==name && e.person!==name);
       save(); renderAll();
     }
     function addCategory(name){
-      name = (name||'').trim();
-      if(!name) return;
-      if(data.categories.includes(name)) return;
-      data.categories.push(name); save(); renderPeopleCats();
+      name = (name||'').trim(); if(!name) return; if((data.categories||[]).includes(name)) return;
+      (data.categories = data.categories||[]).push(name); save(); renderPeopleCats();
     }
     function removeCategory(name){
-      data.categories = data.categories.filter(c=>c!==name);
-      data.expenses = data.expenses.filter(e=>e.category!==name);
+      data.categories = (data.categories||[]).filter(c=>c!==name);
+      data.expenses = (data.expenses||[]).filter(e=>e.category!==name);
       save(); renderAll();
     }
     function parseAmounts(text){
@@ -938,16 +932,20 @@
       for(const t of tokens){ const cleaned=t.replace(/\u20ac/g,'').replace(/,/g,'.'); const n=parseFloat(cleaned); if(!isNaN(n)) nums.push(n); }
       return nums;
     }
+
     function addQuickExpenses(){
-      const person = quickPerson.value;
+      const payer = quickPerson.value;
       const category = quickCategory.value;
-      if(!person || !category){ alert('Please select a person and category'); return; }
+      if(!payer || !category){ alert('Please select a person and category'); return; }
       const amounts = parseAmounts(quickAmounts.value);
       if(!amounts.length){ alert('Add at least one amount'); return; }
       const note = document.getElementById('quickNote') ? document.getElementById('quickNote').value.trim() : '';
-      for(const a of amounts){ if(a<=0) continue; data.expenses.push({person, category, amount: round2(a), note}); }
+      const choice = quickSplit.value || '50_50';
+      const splits = computeSplitsFromChoice(choice, payer);
+      for(const a of amounts){ if(a<=0) continue; (data.expenses = data.expenses||[]).push({payer, category, amount: round2(+a), note, splits}); }
       save(); renderAll(); quickAmounts.value='';
     }
+
     function makeBatchRow(category=''){
       const row=document.createElement('div'); row.className='row';
       row.innerHTML='\
@@ -955,19 +953,21 @@
         <div class="col" style="width:160px"><label>Amount</label><input class="batchAmount" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/></div>\
         <div class="col" style="flex:1;min-width:200px"><label>Note (optional)</label><input class="batchNote" type="text" placeholder="e.g., receipt #1234"/></div>\
         <button class="btn ghost removeRowBtn" type="button" title="Remove">🗑️</button>';
-      const sel=row.querySelector('.batchCategory'); fillSelect(sel, data.categories); if(category) sel.value=category;
+      const sel=row.querySelector('.batchCategory'); fillSelect(sel, (data.categories||[])); if(category) sel.value=category;
       row.querySelector('.removeRowBtn').addEventListener('click',()=>row.remove());
       return row;
     }
     function saveBatch(){
-      const person=batchPerson.value; if(!person){ alert('Select a person'); return; }
+      const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
       const rows=[...batchRows.querySelectorAll('.row')]; if(!rows.length){ alert('Add at least one line'); return; }
+      const choice = batchSplit.value || '50_50';
+      const splits = computeSplitsFromChoice(choice, payer);
       let added=0;
       for(const r of rows){
         const cat=r.querySelector('.batchCategory').value;
         const val=parseFloat(r.querySelector('.batchAmount').value);
         const note=(r.querySelector('.batchNote')?.value||'').trim();
-        if(cat && isFinite(val) && val>0){ data.expenses.push({person, category:cat, amount: round2(val), note}); added++; }
+        if(cat && isFinite(val) && val>0){ (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits}); added++; }
       }
       if(!added){ alert('Please enter valid amounts'); return; }
       batchRows.innerHTML=''; save(); renderAll();
@@ -980,14 +980,12 @@
       await loadFromFileOrLocal(initial);
       lastLoadedMonth = initial;
       lastMonthSnapshot = data ? {people:[...(data.people||[])], categories:[...(data.categories||[])]} : null;
+      setupCollapsibles();
       renderAll();
       renderAverages();
       setModeBadge();
-
-      // populate copy source on load
       populateCopySource();
 
-      // Copy controls
       document.getElementById('copyMergeBtn').addEventListener('click', ()=>{
         const src = document.getElementById('copySourceMonth').value; copyPeopleCategoriesFrom(src, 'merge');
       });
@@ -996,20 +994,33 @@
         if(confirm('Replace current people & categories with those from '+src+'?')) copyPeopleCategoriesFrom(src, 'overwrite');
       });
 
-      // Month picker change -> safe switch
       monthEl.addEventListener('change', async ()=>{
         populateCopySource();
         const target = monthEl.value;
         await switchMonthSafely(target);
+        buildSplitOptions(quickSplit);
+        buildSplitOptions(batchSplit);
       });
 
-      addPersonBtn.addEventListener('click', ()=>{ const v = personNameEl.value; personNameEl.value=''; addPerson(v); personNameEl.focus(); });
+      addPersonBtn.addEventListener('click', ()=>{
+        const v = personNameEl.value; personNameEl.value=''; addPerson(v); personNameEl.focus();
+        buildSplitOptions(quickSplit); buildSplitOptions(batchSplit);
+      });
       personNameEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ addPersonBtn.click(); }});
 
-      addCategoryBtn.addEventListener('click', ()=>{ const v = categoryNameEl.value; categoryNameEl.value=''; addCategory(v); categoryNameEl.focus(); });
+      addCategoryBtn.addEventListener('click', ()=>{
+        const v = categoryNameEl.value; categoryNameEl.value=''; addCategory(v); categoryNameEl.focus();
+      });
 
-      modeQuickBtn.addEventListener('click', ()=>{ modeQuickBtn.classList.add('active'); modeBatchBtn.classList.remove('active'); quickPanel.style.display='block'; batchPanel.style.display='none'; });
-      modeBatchBtn.addEventListener('click', ()=>{ modeBatchBtn.classList.add('active'); modeQuickBtn.classList.remove('active'); quickPanel.style.display='none'; batchPanel.style.display='block'; if(!batchRows.children.length) batchRows.appendChild(makeBatchRow()); });
+      modeQuickBtn.addEventListener('click', ()=>{
+        modeQuickBtn.classList.add('active'); modeBatchBtn.classList.remove('active');
+        quickPanel.style.display='block'; batchPanel.style.display='none';
+      });
+      modeBatchBtn.addEventListener('click', ()=>{
+        modeBatchBtn.classList.add('active'); modeQuickBtn.classList.remove('active');
+        quickPanel.style.display='none'; batchPanel.style.display='block';
+        if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
+      });
 
       addQuickBtn.addEventListener('click', addQuickExpenses);
       clearQuickBtn.addEventListener('click', ()=>{ quickAmounts.value=''; });
@@ -1033,21 +1044,17 @@
         }
       });
 
-      // File buttons
       chooseFileBtn.addEventListener('click', chooseOpenFile);
       createFileBtn.addEventListener('click', createNewFile);
       reopenBtn.addEventListener('click', reopenLastFile);
 
-      document.getElementById('undoBtn').addEventListener('click', undoLastAction);
-
-      // Auto-reconnect last Drive file if permission is still granted
+      // Auto-reopen last file if permission remains
       try{
         const h = await idbGet(HANDLE_KEY);
         if(h){
           const ok = await h.queryPermission({mode:'readwrite'});
           if(ok==='granted'){
             fileHandle = h; fileData = await readFileJSON(fileHandle);
-            // Merge current local month to file if it's missing to prevent loss
             mergeCurrentMonthLocalIntoFile();
             await writeFileJSON(fileHandle, fileData);
             localMirrorAllFromFile();
@@ -1059,6 +1066,10 @@
           }
         }
       }catch{}
+
+      // initial split options
+      buildSplitOptions(quickSplit);
+      buildSplitOptions(batchSplit);
     });
   </script>
 </body>
