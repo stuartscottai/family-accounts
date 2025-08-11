@@ -867,52 +867,78 @@
 
     // Import / Export
     function importJSON(obj){
-      if(obj && obj.months && typeof obj.months === 'object'){
-        fileData = {months:{...fileData.months, ...obj.months}};
-      } else if (obj && (obj.people || obj.categories || obj.expenses)){
-        const m = monthEl.value || thisMonthValue();
-        fileData.months[m] = obj;
-      } else { alert('This JSON does not look like a Family Accounts export.'); return; }
-      for(const m of Object.keys(fileData.months)){
-        try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
-      }
-      if(fileHandle){ writeFileJSON(fileHandle, fileData).catch(()=>{}); }
-      if(fileData.months[monthEl.value]){ data = fileData.months[monthEl.value]; }
-      renderAll(); renderAverages();
-      alert('Import complete!');
+  function normaliseMonth(x){
+    if(!x || typeof x !== 'object') return {people:[], categories:[], expenses:[], lastEdited:new Date().toISOString()};
+    const src = x.data && typeof x.data==='object' ? x.data : x;
+    return {
+      people: Array.isArray(src.people) ? src.people.map(String) : [],
+      categories: Array.isArray(src.categories) ? src.categories.map(String) : [],
+      expenses: Array.isArray(src.expenses) ? src.expenses.map(e=>({
+        payer: e.payer || e.person || '',
+        category: e.category || '',
+        amount: typeof e.amount === 'string' ? parseFloat(e.amount.replace(',','.')) : (+e.amount||0),
+        note: e.note || '',
+        splits: (e.splits && typeof e.splits==='object') ? e.splits : (e.payer||e.person ? {[e.payer||e.person]:100} : {})
+      })) : [],
+      lastEdited: src.lastEdited || new Date().toISOString()
+    };
+  }
+
+  const nowMonth = monthEl.value || thisMonthValue();
+
+  if(obj && obj.months && typeof obj.months === 'object'){
+    for(const [m, val] of Object.entries(obj.months)){
+      fileData.months[m] = normaliseMonth(val);
+    }
+  } else if (obj && (obj.people || obj.categories || obj.expenses || obj.data)){
+    fileData.months[nowMonth] = normaliseMonth(obj);
+  } else {
+    throw new Error('This file is valid JSON but not a recognised Family Accounts export.');
+  }
+
+  for(const m of Object.keys(fileData.months)){
+    try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
+  }
+  if(fileHandle){ writeFileJSON(fileHandle, fileData).catch(()=>{}); }
+  if(fileData.months[nowMonth]){ data = fileData.months[nowMonth]; }
+  renderAll();
+  renderAverages();
+}
+
+importBtn.addEventListener('click', ()=> importInput.click());
+
+importInput.addEventListener('change', async (e)=>{
+  const f = e.target.files && e.target.files[0];
+  if(!f) return;
+  try{
+    const rawText = await f.text();
+    const text = String(rawText).replace(/^\uFEFF/, '').trim();
+
+    const head = text.slice(0, 200).toLowerCase();
+    if(head.includes('<!doctype') || head.includes('<html')){
+      alert('That file looks like an HTML page, not JSON. If downloading from GitHub, click "Raw" before saving.');
+      return;
     }
 
-    function downloadBlob(obj, filename){
-      const blob = new Blob([JSON.stringify(obj, null, 2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = filename;
-      document.body.appendChild(a); a.click(); a.remove();
-      URL.revokeObjectURL(url);
+    let obj;
+    try {
+      obj = JSON.parse(text);
+    } catch {
+      const stripped = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      obj = JSON.parse(stripped);
     }
 
-    importBtn.addEventListener('click', ()=> importInput.click());
-    importInput.addEventListener('change', async (e)=>{
-      const f = e.target.files && e.target.files[0];
-      if(!f) return;
-      try{
-        const text = await f.text();
-        const obj = JSON.parse(String(text).replace(/^\uFEFF/, '').trim());
-        importJSON(obj);
-      }catch(err){ alert('Could not read that JSON.'); }
-      finally { importInput.value = ''; }
-    });
+    importJSON(obj);
+    alert('Import complete!');
 
-    exportBtn.addEventListener('click', ()=>{
-      const out = {months:{}};
-      const months = new Set([...(fileHandle?Object.keys(fileData.months):[]), ...listSavedMonthsLocal()]);
-      for(const m of months){
-        const raw = localStorage.getItem(keyFor(m));
-        if(raw){ try{ out.months[m] = JSON.parse(raw); }catch{} }
-        if(!out.months[m] && fileHandle && fileData.months[m]) out.months[m] = fileData.months[m];
-      }
-      downloadBlob(out, 'family-accounts-backup.json');
-    });
+  }catch(err){
+    alert('Could not read that JSON.');
+    console.error(err);
+  } finally {
+    importInput.value = '';
+  }
+});
+
 
     // ---------- Month switching ----------
     async function switchMonthSafely(targetMonth){
