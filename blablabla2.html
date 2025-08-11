@@ -1129,5 +1129,39 @@ importInput.addEventListener('change', async (e)=>{
       buildSplitOptions(batchSplit);
     });
   </script>
+  <script>
+/* Hotfix: rebind top file buttons on GitHub Pages and fallback to Import JSON if needed */
+(function(){
+  function rebindFileButtons(){
+    var supported = !!window.showOpenFilePicker && window.isSecureContext && (window.self===window.top);
+    var fallbackToImport = function(){
+      var importBtn = document.getElementById('importBtn');
+      if(importBtn) importBtn.click();
+    };
+    var plan = {
+      chooseFileBtn: async function(){ return supported ? await (window.chooseOpenFile && chooseOpenFile()) : fallbackToImport(); },
+      createFileBtn: async function(){ return supported ? await (window.createNewFile && createNewFile()) : fallbackToImport(); },
+      reopenBtn:     async function(){ return supported ? await (window.reopenLastFile && reopenLastFile()) : fallbackToImport(); }
+    };
+    Object.keys(plan).forEach(function(id){
+      var oldBtn = document.getElementById(id);
+      if(!oldBtn) return;
+      // Replace the node to drop any previous (broken) listeners
+      var fresh = oldBtn.cloneNode(true);
+      oldBtn.parentNode.replaceChild(fresh, oldBtn);
+      fresh.addEventListener('click', function(ev){
+        ev.preventDefault();
+        Promise.resolve(plan[id]()).catch(function(err){
+          console.warn(id+' failed:', err);
+          fallbackToImport();
+        });
+      });
+    });
+  }
+  // Run after everything is loaded
+  window.addEventListener('load', function(){ try{ rebindFileButtons(); } catch(e){ console.warn('rebind failed', e); } });
+})();
+</script>
 </body>
 </html>
+
