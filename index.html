@@ -255,7 +255,7 @@
         <div class="card-header"><div class="card-title">Who owes who</div><div class="chev">▸</div></div>
         <div class="card-content">
           <div id="settlements"></div>
-          <div class="note">Everyone should pay an equal share of the month’s total. Positive balances are owed money; negative balances owe money.</div>
+          <div class="note">Balances are based on what each person paid minus what they owed from the chosen splits. Positive balances mean others owe them; negative balances mean they owe others.</div>
         </div>
       </div>
 
@@ -584,6 +584,7 @@
     }
 
     // ---------- Computations & Rendering ----------
+    // CHANGED: computeTotals now shows what each person ACTUALLY PAID (sum by payer), not split shares
     function computeTotals(){
       const perPerson = Object.fromEntries((data.people||[]).map(p=>[p,0]));
       const perCategory = Object.fromEntries((data.categories||[]).map(c=>[c,0]));
@@ -591,11 +592,8 @@
       for(const e of (data.expenses||[])){
         const amount = +e.amount || 0;
         const payer = e.payer || e.person || '';
-        const splits = e.splits || {[payer]:100};
-        for(const [p, pct] of Object.entries(splits)){
-          if(!(p in perPerson)) perPerson[p]=0;
-          perPerson[p] += round2(amount * (pct||0)/100);
-        }
+        if(!(payer in perPerson)) perPerson[payer]=0;
+        perPerson[payer] = round2((perPerson[payer]||0) + amount);
         if(!(e.category in perCategory)) perCategory[e.category]=0;
         perCategory[e.category]+= amount;
         grand+= amount;
@@ -603,6 +601,63 @@
       perPerson.__total = round2(grand);
       return {perPerson, perCategory};
     }
+
+    // CHANGED: computeSettlements uses PAID vs OWED (OWED from splits), not equal-share-of-grand-total
+    function computeSettlements(){
+      const people = (data.people||[]);
+      const paid = Object.fromEntries(people.map(p=>[p,0]));
+      const owed = Object.fromEntries(people.map(p=>[p,0]));
+      let grand = 0;
+
+      for(const e of (data.expenses||[])){
+        const amount = +e.amount || 0;
+        const payer = e.payer || e.person || '';
+        grand += amount;
+
+        // what was actually paid
+        if(!(payer in paid)) paid[payer]=0;
+        paid[payer] = round2((paid[payer]||0) + amount);
+
+        // liability owed according to splits
+        const splits = e.splits || {[payer]:100};
+        const entries = Object.entries(splits);
+        let allocated = 0;
+        entries.forEach(([p, pct], idx) => {
+          if(!(p in owed)) owed[p]=0;
+          let part = round2(amount * ((+pct || 0)/100));
+          allocated = round2(allocated + part);
+          if(idx === entries.length - 1){
+            const remainder = round2(amount - allocated);
+            part = round2(part + remainder);
+          }
+          owed[p] = round2((owed[p]||0) + part);
+        });
+      }
+
+      const balances = people.map(p=>({ person:p, balance: round2((paid[p]||0) - (owed[p]||0)) }));
+
+      // greedy settlement: debtors (negative) pay creditors (positive)
+      const creditors = balances.filter(b=>b.balance>0).map(b=>({...b})).sort((a,b)=>b.balance-a.balance);
+      const debtors = balances.filter(b=>b.balance<0).map(b=>({...b})).sort((a,b)=>a.balance-b.balance);
+      const transfers = [];
+      let ci=0, di=0;
+      while(ci<creditors.length && di<debtors.length){
+        const c = creditors[ci], d = debtors[di];
+        const amt = round2(Math.min(c.balance, -d.balance));
+        if(amt>0){
+          transfers.push({from:d.person,to:c.person,amount:amt});
+          c.balance = round2(c.balance - amt);
+          d.balance = round2(d.balance + amt);
+        }
+        if(c.balance<=0.0001) ci++;
+        if(d.balance>=-0.0001) di++;
+      }
+      // Share kept ONLY for existing UI display; not used in balance math
+      const n = people.length || 1;
+      const share = round2((grand||0)/n);
+      return {share, balances, transfers};
+    }
+
     function renderPeopleCats(){
       peopleChips.innerHTML = '';
       for(const p of (data.people||[])){
@@ -617,7 +672,7 @@
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+cName+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category "'+cName+'" and related expenses?')) { removeCategory(cName); }});
+        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category \"'+cName+'\" and related expenses?')) { removeCategory(cName); }});
         categoriesChips.appendChild(c);
       }
       fillSelect(quickPerson, (data.people||[]));
@@ -655,7 +710,7 @@
       const total = perPerson.__total || 0;
       let htmlP='';
       if((data.people||[]).length){
-        htmlP += '<table><thead><tr><th>Person</th><th>Total (share)</th></tr></thead><tbody>';
+        htmlP += '<table><thead><tr><th>Person</th><th>Total paid this month</th></tr></thead><tbody>';
         for(const p of (data.people||[])){
           htmlP += '<tr><td>'+p+'</td><td>'+euro(round2(perPerson[p]||0))+'</td></tr>';
         }
@@ -673,35 +728,11 @@
       } else htmlC = '<div class="muted">Add some categories to see totals.</div>';
       totalsCategories.innerHTML = htmlC;
     }
-    function computeSettlements(){
-      const {perPerson} = computeTotals();
-      const people = (data.people||[]);
-      const total = perPerson.__total || 0;
-      const n = people.length || 1;
-      const share = round2(total / n);
-      const balances = people.map(p=>({person:p, balance: round2((perPerson[p]||0) - share)}));
-      const creditors = balances.filter(b=>b.balance>0).map(b=>({...b})).sort((a,b)=>b.balance-a.balance);
-      const debtors = balances.filter(b=>b.balance<0).map(b=>({...b})).sort((a,b)=>a.balance-b.balance);
-      const transfers = [];
-      let ci=0, di=0;
-      while(ci<creditors.length && di<debtors.length){
-        const c = creditors[ci], d = debtors[di];
-        const amt = round2(Math.min(c.balance, -d.balance));
-        if(amt>0){
-          transfers.push({from:d.person,to:c.person,amount:amt});
-          c.balance = round2(c.balance - amt);
-          d.balance = round2(d.balance + amt);
-        }
-        if(c.balance<=0.0001) ci++;
-        if(d.balance>=-0.0001) di++;
-      }
-      return {share, balances, transfers};
-    }
     function renderSettlements(){
       const {share, balances, transfers} = computeSettlements();
       if(!(data.people||[]).length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
-      let html = '<div class="row"><div>Equal share per person: <strong>'+euro(share)+'</strong></div></div>';
-      html += '<table><thead><tr><th>Person</th><th>Balance vs share</th></tr></thead><tbody>';
+      let html = '<div class="row"><div>Equal share per person (based on splits): <strong>'+euro(share)+'</strong></div></div>';
+      html += '<table><thead><tr><th>Person</th><th>Balance (positive = others owe them, negative = they owe others)</th></tr></thead><tbody>';
       for(const b of balances){
         const cls = b.balance>=0? 'ok' : 'bad';
         html += '<tr><td>'+b.person+'</td><td><span class="pill '+cls+'">'+(b.balance>=0?'+':'')+euro(b.balance)+'</span></td></tr>';
