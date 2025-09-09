@@ -66,6 +66,19 @@
     .summary-row{display:flex; align-items:center; gap:8px}
     .tag{font-size:12px; padding:4px 8px; border:1px solid var(--border); border-radius:999px; background:#f8fafc}
   </style>
+<link rel="manifest" href="/family-accounts/manifest.webmanifest" />
+<meta name="theme-color" content="#0f172a" />
+<link rel="icon" href="/family-accounts/icon-192.png" sizes="192x192" />
+<link rel="icon" href="/family-accounts/icon-512.png" sizes="512x512" />
+
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/family-accounts/service-worker.js")
+        .catch(err => console.error("SW registration failed:", err));
+    });
+  }
+</script>
 </head>
 <body>
   <div class="wrap">
