@@ -70,6 +70,7 @@
 <meta name="theme-color" content="#0f172a" />
 <link rel="icon" href="/family-accounts/favicon-32.png" sizes="32x32" />
 <link rel="icon" href="/family-accounts/favicon-48.png" sizes="48x48" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <script>
   if ("serviceWorker" in navigator) {
@@ -92,23 +93,42 @@
     </div>
 
     <div class="stack" style="margin-top:14px">
-      <!-- Collapsible: File options -->
+      <div class="card" data-section="auth">
+        <div class="card-header"><div class="card-title">Supabase account</div><div class="chev">▸</div></div>
+        <div class="card-content">
+          <div class="row">
+            <div class="col" style="flex:1;min-width:220px">
+              <label for="authEmail">Email</label>
+              <input id="authEmail" type="text" autocomplete="email" placeholder="you@example.com" />
+            </div>
+            <div class="col" style="flex:1;min-width:220px">
+              <label for="authPassword">Password</label>
+              <input id="authPassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+            </div>
+          </div>
+          <div class="row">
+            <button class="btn" id="signInBtn" type="button">Sign in</button>
+            <button class="btn alt" id="signUpBtn" type="button">Sign up</button>
+            <button class="btn ghost" id="signOutBtn" type="button">Sign out</button>
+            <div class="note" id="authStatus">Not signed in.</div>
+          </div>
+          <div class="note">Sign up requires email confirmation. Your data is stored in Supabase once signed in.</div>
+        </div>
+      </div>
+
       <details>
         <summary>
           <div class="summary-row">
-            <span>File options</span>
-            <span class="tag" id="fileStatus">Local-only (no file)</span>
+            <span>Import / export</span>
+            <span class="tag" id="fileStatus">Local-only (not signed in)</span>
           </div>
         </summary>
         <div class="row" style="margin-top:8px">
-          <button class="btn" id="chooseFileBtn" type="button">Choose / Open data file</button>
-          <button class="btn ghost" id="createFileBtn" type="button">Create new data file</button>
-          <button class="btn ghost" id="reopenBtn" type="button">Reopen last file</button>
           <button class="btn alt" id="importBtn" type="button">Import JSON (backup)</button>
           <input type="file" id="importInput" accept="application/json" style="display:none" />
           <button class="btn alt" id="exportBtn" type="button">Export JSON (backup)</button>
         </div>
-        <div class="note">Tip: If you use a Drive JSON here, the app autosaves to it. Otherwise it saves locally in this browser. Export creates a full backup of all months.</div>
+        <div class="note">Importing a backup will merge all months into your current storage mode.</div>
       </details>
 
       <!-- NEW: Month picker in its own box -->
@@ -353,10 +373,15 @@
     const avgCatYTD = document.getElementById('avgCatYTD');
     const avgCatAll = document.getElementById('avgCatAll');
 
-    // File & data mgmt selectors
-    const chooseFileBtn = document.getElementById('chooseFileBtn');
-    const createFileBtn = document.getElementById('createFileBtn');
-    const reopenBtn = document.getElementById('reopenBtn');
+    // Auth selectors
+    const authEmail = document.getElementById('authEmail');
+    const authPassword = document.getElementById('authPassword');
+    const signInBtn = document.getElementById('signInBtn');
+    const signUpBtn = document.getElementById('signUpBtn');
+    const signOutBtn = document.getElementById('signOutBtn');
+    const authStatus = document.getElementById('authStatus');
+
+    // Import/export selectors
     const fileStatus = document.getElementById('fileStatus');
     const importBtn = document.getElementById('importBtn');
     const exportBtn = document.getElementById('exportBtn');
@@ -364,13 +389,16 @@
 
     // ---------- App state ----------
     let data = null; // current month data
-    let fileHandle = null; // FileSystemFileHandle
-    let fileData = { months: {} }; // consolidated months when using a file
+    let fileData = { months: {} }; // consolidated months when using Supabase
     let saveDebounce = null;
-    const HANDLE_DB = 'famacct-db';
-    const HANDLE_KEY = 'dataFile';
     let lastLoadedMonth = null;
     let lastMonthSnapshot = null; // for copying people/categories when creating new month
+    let supabaseClient = null;
+    let currentUser = null;
+
+    // ---------- Supabase config ----------
+    const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
+    const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 
     // ---------- Utilities ----------
     function thisMonthValue(){
@@ -385,7 +413,13 @@
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
     function debounceSave(){ clearTimeout(saveDebounce); saveDebounce = setTimeout(()=>persist(), 400); }
-    function setModeBadge(){ modeBadge.textContent = fileHandle ? `Mode: Drive file — ${fileHandle.name}` : 'Mode: Local storage'; }
+    function setModeBadge(){
+      if(currentUser){
+        modeBadge.textContent = `Mode: Supabase — ${currentUser.email}`;
+        return;
+      }
+      modeBadge.textContent = 'Mode: Local storage (not signed in)';
+    }
     function formatUK(iso){
       if(!iso) return '—';
       const d = new Date(iso);
@@ -432,12 +466,6 @@
       }
     }
     function localSaveCurrent(){ localStorage.setItem(keyFor(monthEl.value), JSON.stringify(data)); }
-    function localMirrorAllFromFile(){
-      const months = Object.keys(fileData.months||{});
-      for(const m of months){
-        try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
-      }
-    }
     function listSavedMonthsLocal(){
       const months = [];
       for(let i=0;i<localStorage.length;i++){
@@ -448,62 +476,16 @@
       return months;
     }
 
-    // ---------- Storage: File ----------
-    async function ensureRW(handle){
-      if(!handle) return false;
-      const p = await handle.queryPermission({mode:'readwrite'});
-      if(p==='granted') return true;
-      const req = await handle.requestPermission({mode:'readwrite'});
-      return req==='granted';
-    }
-    async function readFileJSON(handle){
-      const file = await handle.getFile();
-      const text = await file.text();
-      try{ return JSON.parse(text); }catch{ return {months:{}} }
-    }
-    async function writeFileJSON(handle, obj){
-      const writable = await handle.createWritable();
-      await writable.write(JSON.stringify(obj, null, 2));
-      await writable.close();
-    }
-    function listSavedMonthsFile(){ return Object.keys(fileData.months||{}).sort((a,b)=> a<b?1:(a>b?-1:0)); }
-
-    // ---------- IndexedDB handle store ----------
-    function idbOpen(){
-      return new Promise((resolve, reject)=>{
-        const req = indexedDB.open(HANDLE_DB, 1);
-        req.onupgradeneeded = ()=>{ const db = req.result; if(!db.objectStoreNames.contains('handles')) db.createObjectStore('handles'); };
-        req.onsuccess = ()=>resolve(req.result);
-        req.onerror = ()=>reject(req.error);
-      });
-    }
-    async function idbSet(key, val){
-      const db = await idbOpen();
-      return new Promise((resolve,reject)=>{
-        const tx = db.transaction('handles','readwrite');
-        tx.objectStore('handles').put(val, key);
-        tx.oncomplete = ()=>resolve();
-        tx.onerror = ()=>reject(tx.error);
-      });
-    }
-    async function idbGet(key){
-      const db = await idbOpen();
-      return new Promise((resolve,reject)=>{
-        const tx = db.transaction('handles','readonly');
-        const req = tx.objectStore('handles').get(key);
-        req.onsuccess = ()=>resolve(req.result);
-        req.onerror = ()=>reject(req.error);
-      });
-    }
+    function listSavedMonthsRemote(){ return Object.keys(fileData.months||{}).sort((a,b)=> a<b?1:(a>b?-1:0)); }
 
     // ---------- Shared load/save ----------
     function monthExists(month){
-      if(fileHandle) return !!(fileData.months && fileData.months[month]);
+      if(currentUser) return !!(fileData.months && fileData.months[month]);
       return localStorage.getItem(keyFor(month)) != null;
     }
 
     async function loadFromFileOrLocal(month){
-      if(fileHandle){
+      if(currentUser){
         data = fileData.months[month];
         if(!data){
           const localRaw = localStorage.getItem(keyFor(month));
@@ -520,13 +502,11 @@
 
     function persist(){
       try{ localSaveCurrent(); }catch{}
-      if(fileHandle){
+      if(currentUser){
         fileData.months[monthEl.value] = data;
-        writeFileJSON(fileHandle, fileData).then(()=>{
-          fileStatus.textContent = `File: ${fileHandle.name} — saved`;
-        }).catch(err=>{
+        saveRemote().catch(err=>{
           console.error(err);
-          fileStatus.textContent = `File: ${fileHandle.name} — save failed (working locally)`;
+          fileStatus.textContent = 'Supabase save failed (working locally)';
         });
       }
       renderAverages();
@@ -771,9 +751,9 @@
     }
 
     // Averages across months (from local or file)
-    function listSavedMonths(){ return fileHandle ? listSavedMonthsFile() : listSavedMonthsLocal(); }
+    function listSavedMonths(){ return currentUser ? listSavedMonthsRemote() : listSavedMonthsLocal(); }
     function getMonthData(m){
-      if(fileHandle) return fileData.months[m] || defaultData(null);
+      if(currentUser) return fileData.months[m] || defaultData(null);
       const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
       try{ return JSON.parse(raw); }catch{return defaultData(null);} }
     function computeAverages(){
@@ -808,74 +788,64 @@
       avgCatYTD.innerHTML = tableFromMap(avgCatYTDMap, 'Category', 'Avg / month (YTD)');
     }
 
-    // ---------- File & data mgmt ----------
+    // ---------- Supabase ----------
+    function initSupabase(){
+      if(!window.supabase || !SUPABASE_URL || !SUPABASE_ANON_KEY){
+        console.warn('Supabase client not configured.');
+        return;
+      }
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
+
+    async function loadRemote(){
+      if(!supabaseClient || !currentUser) return;
+      const { data: rows, error } = await supabaseClient
+        .from('family_account_data')
+        .select('data')
+        .eq('user_id', currentUser.id)
+        .limit(1);
+      if(error){
+        console.error(error);
+        return;
+      }
+      if(rows && rows.length){
+        fileData = rows[0].data || { months: {} };
+      } else {
+        fileData = { months: {} };
+        await saveRemote();
+      }
+    }
+
+    async function saveRemote(){
+      if(!supabaseClient || !currentUser) return;
+      const payload = {
+        user_id: currentUser.id,
+        data: fileData,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabaseClient
+        .from('family_account_data')
+        .upsert(payload, { onConflict: 'user_id' });
+      if(error) throw error;
+    }
+
+    async function refreshSession(){
+      if(!supabaseClient) return;
+      const { data: sessionData } = await supabaseClient.auth.getSession();
+      currentUser = sessionData?.session?.user || null;
+      setModeBadge();
+    }
+
     function updateFileStatus(){
-      if(fileHandle){ fileStatus.textContent = 'File: '+fileHandle.name; }
-      else { fileStatus.textContent = 'Local-only (no file)'; }
+      if(currentUser){
+        fileStatus.textContent = 'Supabase storage';
+        authStatus.textContent = `Signed in as ${currentUser.email}`;
+      } else {
+        fileStatus.textContent = 'Local-only (not signed in)';
+        authStatus.textContent = 'Not signed in.';
+      }
       setModeBadge();
       populateCopySource();
-    }
-
-    function mergeCurrentMonthLocalIntoFile(){
-      const m = monthEl.value;
-      if(!fileHandle) return;
-      if(fileData.months[m]) return; // file already has it
-      const raw = localStorage.getItem(keyFor(m));
-      if(!raw) return;
-      try{ const local = JSON.parse(raw); fileData.months[m] = local; }catch{}
-    }
-
-    async function chooseOpenFile(){
-      try{
-        if(!window.showOpenFilePicker){ alert('Your browser does not support this file picker. Use Import JSON instead.'); return; }
-        const [h] = await window.showOpenFilePicker({ multiple:false, types:[{description:'JSON', accept:{'application/json':['.json']}}] });
-        if(!h) return;
-        if(!(await ensureRW(h))) { alert('No permission to read/write this file.'); return; }
-        fileHandle = h;
-        fileData = await readFileJSON(fileHandle);
-        if(!fileData || typeof fileData!=='object' || !fileData.months){ fileData = {months:{}}; }
-        mergeCurrentMonthLocalIntoFile();
-        await writeFileJSON(fileHandle, fileData);
-        localMirrorAllFromFile();
-        await idbSet(HANDLE_KEY, fileHandle);
-        updateFileStatus();
-        await loadFromFileOrLocal(monthEl.value);
-        renderAll(); renderAverages();
-      }catch(e){ /* canceled */ }
-    }
-
-    async function createNewFile(){
-      try{
-        if(!window.showSaveFilePicker){ alert('Your browser does not support creating files here. Use Export JSON to create one.'); return; }
-        const h = await window.showSaveFilePicker({ suggestedName:'family-accounts.json', types:[{description:'JSON', accept:{'application/json':['.json']}}] });
-        if(!(await ensureRW(h))) { alert('No permission to write this file.'); return; }
-        fileHandle = h; fileData = {months:{}};
-        mergeCurrentMonthLocalIntoFile();
-        await writeFileJSON(fileHandle, fileData);
-        await idbSet(HANDLE_KEY, fileHandle);
-        updateFileStatus();
-        await loadFromFileOrLocal(monthEl.value);
-        renderAll(); renderAverages();
-      }catch(e){ /* canceled */ }
-    }
-
-    async function reopenLastFile(){
-      try{
-        const h = await idbGet(HANDLE_KEY);
-        if(!h){ alert('No stored file handle yet. Choose a data file first.'); return; }
-        if(!(await ensureRW(h))) { alert('Permission to the previous file was revoked. Please choose it again.'); return; }
-        fileHandle = h;
-        fileData = await readFileJSON(fileHandle);
-        if(!fileData || typeof fileData!=='object' || !fileData.months){ fileData = {months:{}}; }
-        mergeCurrentMonthLocalIntoFile();
-        await writeFileJSON(fileHandle, fileData);
-        localMirrorAllFromFile();
-        updateFileStatus();
-        await loadFromFileOrLocal(monthEl.value);
-        renderAll(); renderAverages();
-      }catch(e){
-        alert('Could not reopen last file. Please choose it again.');
-      }
     }
 
     // Import / Export
@@ -912,7 +882,7 @@
   for(const m of Object.keys(fileData.months)){
     try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
   }
-  if(fileHandle){ writeFileJSON(fileHandle, fileData).catch(()=>{}); }
+  if(currentUser){ saveRemote().catch(()=>{}); }
   if(fileData.months[nowMonth]){ data = fileData.months[nowMonth]; }
   renderAll();
   renderAverages();
@@ -952,6 +922,32 @@ importInput.addEventListener('change', async (e)=>{
   }
 });
 
+
+    function buildExportPayload(){
+      if(currentUser){
+        return fileData;
+      }
+      const months = {};
+      for(const m of listSavedMonthsLocal()){
+        const raw = localStorage.getItem(keyFor(m));
+        if(!raw) continue;
+        try{ months[m] = JSON.parse(raw); }catch{}
+      }
+      return { months };
+    }
+
+    function exportJSON(){
+      const payload = buildExportPayload();
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `family-accounts-backup-${new Date().toISOString().slice(0,10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
 
     // ---------- Month switching ----------
     async function switchMonthSafely(targetMonth){
@@ -1045,16 +1041,32 @@ importInput.addEventListener('change', async (e)=>{
 
     // ---------- Init & events ----------
     document.addEventListener('DOMContentLoaded', async ()=>{
+      initSupabase();
+      if(supabaseClient){
+        await refreshSession();
+        supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+          currentUser = session?.user || null;
+          if(currentUser){
+            await loadRemote();
+            await loadFromFileOrLocal(monthEl.value);
+          }
+          updateFileStatus();
+          renderAll();
+          renderAverages();
+        });
+      }
       const initial = thisMonthValue();
       monthEl.value = initial;
+      if(currentUser){
+        await loadRemote();
+      }
       await loadFromFileOrLocal(initial);
       lastLoadedMonth = initial;
       lastMonthSnapshot = data ? {people:[...(data.people||[])], categories:[...(data.categories||[])]} : null;
       setupCollapsibles();
       renderAll();
       renderAverages();
-      setModeBadge();
-      populateCopySource();
+      updateFileStatus();
 
       document.getElementById('copyMergeBtn').addEventListener('click', ()=>{
         const src = document.getElementById('copySourceMonth').value; copyPeopleCategoriesFrom(src, 'merge');
@@ -1114,28 +1126,42 @@ importInput.addEventListener('change', async (e)=>{
         }
       });
 
-      chooseFileBtn.addEventListener('click', chooseOpenFile);
-      createFileBtn.addEventListener('click', createNewFile);
-      reopenBtn.addEventListener('click', reopenLastFile);
+      exportBtn.addEventListener('click', exportJSON);
 
-      // Auto-reopen last file if permission remains
-      try{
-        const h = await idbGet(HANDLE_KEY);
-        if(h){
-          const ok = await h.queryPermission({mode:'readwrite'});
-          if(ok==='granted'){
-            fileHandle = h; fileData = await readFileJSON(fileHandle);
-            mergeCurrentMonthLocalIntoFile();
-            await writeFileJSON(fileHandle, fileData);
-            localMirrorAllFromFile();
-            updateFileStatus();
-            await loadFromFileOrLocal(initial);
-            lastLoadedMonth = initial;
-            renderAll();
-            renderAverages();
-          }
-        }
-      }catch{}
+      signInBtn.addEventListener('click', async ()=>{
+        if(!supabaseClient){ alert('Supabase is not configured.'); return; }
+        const email = authEmail.value.trim();
+        const password = authPassword.value;
+        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if(error){ alert(error.message); return; }
+        await refreshSession();
+        await loadRemote();
+        await loadFromFileOrLocal(monthEl.value);
+        updateFileStatus();
+        renderAll();
+        renderAverages();
+        authStatus.textContent = `Signed in as ${currentUser?.email || ''}`;
+      });
+
+      signUpBtn.addEventListener('click', async ()=>{
+        if(!supabaseClient){ alert('Supabase is not configured.'); return; }
+        const email = authEmail.value.trim();
+        const password = authPassword.value;
+        const { error } = await supabaseClient.auth.signUp({ email, password });
+        if(error){ alert(error.message); return; }
+        authStatus.textContent = 'Check your email to confirm your account, then sign in.';
+      });
+
+      signOutBtn.addEventListener('click', async ()=>{
+        if(!supabaseClient){ return; }
+        await supabaseClient.auth.signOut();
+        currentUser = null;
+        fileData = { months: {} };
+        updateFileStatus();
+        renderAll();
+        renderAverages();
+        authStatus.textContent = 'Not signed in.';
+      });
 
       // initial split options
       buildSplitOptions(quickSplit);
