@@ -389,24 +389,6 @@
         </div>
       </div>
 
-      <div class="card" data-section="copy">
-        <div class="card-header">
-          <div class="card-title">Copy people & categories from another month</div>
-          <div class="chev">▸</div>
-        </div>
-        <div class="card-content">
-          <div class="row">
-            <div class="col" style="min-width:220px;flex:1">
-              <label for="copySourceMonth">Source month</label>
-              <select id="copySourceMonth"></select>
-            </div>
-            <button class="btn alt" id="copyMergeBtn" type="button" title="Keep current + add new from source">Copy (Merge)</button>
-            <button class="btn ghost" id="copyOverwriteBtn" type="button" title="Replace current with source">Copy (Overwrite)</button>
-          </div>
-          <div class="note">Only people & categories are copied. Expenses are not changed.</div>
-        </div>
-      </div>
-
       <div class="card" data-section="people">
         <div class="card-header"><div class="card-title">People</div><div class="chev">▸</div></div>
         <div class="card-content">
@@ -637,11 +619,10 @@
     const importInput = document.getElementById('importInput');
 
     // ---------- App state ----------
-    let data = null; // current month data
-    let fileData = { months: {} }; // consolidated months when using Supabase
+    let data = null; // current month data (only expenses and lastEdited)
+    let fileData = { people: [], categories: [], months: {} }; // Global people/categories + months
     let saveDebounce = null;
     let lastLoadedMonth = null;
-    let lastMonthSnapshot = null; // for copying people/categories when creating new month
     let supabaseClient = null;
     let currentUser = null;
 
@@ -686,8 +667,8 @@
       return `${d.getFullYear()}-${m}`;
     }
     function keyFor(month){ return `famacct:${month}` }
-    function defaultData(copyFrom){
-      return {people:(copyFrom?.people||[]), categories:(copyFrom?.categories||[]), expenses:[], lastEdited: new Date().toISOString()};
+    function defaultData(){
+      return {expenses:[], lastEdited: new Date().toISOString()};
     }
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
@@ -781,15 +762,63 @@
     // ---------- Storage: Local ----------
     function localLoadMonth(month){
       const raw = localStorage.getItem(keyFor(month));
-      if(raw){ 
-        try{ data = JSON.parse(raw)||defaultData(null); }catch{ data = defaultData(null); } 
+      if(raw){
+        try{
+          const parsed = JSON.parse(raw);
+          // Migrate old format: extract people/categories if they exist
+          if(parsed.people || parsed.categories){
+            // Merge into global lists
+            if(parsed.people){
+              fileData.people = Array.from(new Set([...(fileData.people||[]), ...(parsed.people||[])]));
+            }
+            if(parsed.categories){
+              fileData.categories = Array.from(new Set([...(fileData.categories||[]), ...(parsed.categories||[])]));
+            }
+            // Save migrated data
+            saveGlobalToLocal();
+          }
+          // Only keep expenses and lastEdited for month data
+          data = {
+            expenses: parsed.expenses || [],
+            lastEdited: parsed.lastEdited || new Date().toISOString()
+          };
+        }catch{
+          data = defaultData();
+        }
         if(!data.lastEdited){ data.lastEdited = new Date().toISOString(); }
       } else {
-        data = defaultData(null);
+        data = defaultData();
         localStorage.setItem(keyFor(month), JSON.stringify(data));
       }
     }
-    function localSaveCurrent(){ localStorage.setItem(keyFor(monthEl.value), JSON.stringify(data)); }
+    function localSaveCurrent(){
+      // Only save expenses and lastEdited for each month
+      localStorage.setItem(keyFor(monthEl.value), JSON.stringify(data));
+    }
+    function saveGlobalToLocal(){
+      // Save global people and categories
+      try{
+        localStorage.setItem('famacct:global', JSON.stringify({
+          people: fileData.people || [],
+          categories: fileData.categories || []
+        }));
+      }catch(e){
+        console.error('Failed to save global data', e);
+      }
+    }
+    function loadGlobalFromLocal(){
+      // Load global people and categories
+      try{
+        const raw = localStorage.getItem('famacct:global');
+        if(raw){
+          const global = JSON.parse(raw);
+          fileData.people = global.people || [];
+          fileData.categories = global.categories || [];
+        }
+      }catch(e){
+        console.error('Failed to load global data', e);
+      }
+    }
     function listSavedMonthsLocal(){
       const months = [];
       for(let i=0;i<localStorage.length;i++){
@@ -814,9 +843,18 @@
         if(!data){
           const localRaw = localStorage.getItem(keyFor(month));
           if(localRaw){
-            try{ data = JSON.parse(localRaw); }catch{ data = defaultData(null); }
+            try{
+              const parsed = JSON.parse(localRaw);
+              // Only keep expenses and lastEdited
+              data = {
+                expenses: parsed.expenses || [],
+                lastEdited: parsed.lastEdited || new Date().toISOString()
+              };
+            }catch{
+              data = defaultData();
+            }
           } else {
-            data = defaultData(null);
+            data = defaultData();
           }
         }
       } else {
@@ -832,40 +870,18 @@
           console.error(err);
           fileStatus.textContent = 'Supabase save failed (working locally)';
         });
+      } else {
+        saveGlobalToLocal();
       }
       renderAverages();
     }
 
-    // ---------- Copy people & categories from another month ----------
+    // ---------- Helpers ----------
     function uniqueList(arr){ return Array.from(new Set((arr||[]).map(s=>String(s).trim()).filter(Boolean))); }
-    function populateCopySource(){
-      const sel = document.getElementById('copySourceMonth');
-      if(!sel) return;
-      const months = listSavedMonths().filter(m => m !== monthEl.value);
-      sel.innerHTML = '';
-      const opt0 = document.createElement('option'); opt0.value=''; opt0.textContent='— select month —'; sel.appendChild(opt0);
-      for(const m of months){ const o=document.createElement('option'); o.value=m; o.textContent=m; sel.appendChild(o); }
-    }
-    function copyPeopleCategoriesFrom(srcMonth, mode){
-      if(!srcMonth){ alert('Choose a source month'); return; }
-      if(srcMonth === monthEl.value){ alert('Source and current month are the same'); return; }
-      const src = getMonthData(srcMonth);
-      if(!src){ alert('No data found for that month'); return; }
-      const srcPeople = uniqueList(src.people||[]);
-      const srcCats = uniqueList(src.categories||[]);
-      if(mode === 'overwrite'){
-        data.people = srcPeople; data.categories = srcCats;
-      }else{
-        data.people = uniqueList([...(data.people||[]), ...srcPeople]);
-        data.categories = uniqueList([...(data.categories||[]), ...srcCats]);
-      }
-      save(); renderAll();
-      alert('Copied ' + (mode==='overwrite'?'(overwrite)':'(merge)') + ' from ' + srcMonth);
-    }
 
     // ---------- Split helpers ----------
     function buildSplitOptions(selectEl){
-      const ppl = data.people || [];
+      const ppl = fileData.people || [];
       selectEl.innerHTML='';
       if(ppl.length === 2){
         const [a,b] = ppl;
@@ -878,7 +894,7 @@
       }
     }
     function computeSplitsFromChoice(choice, payer){
-      const ppl = data.people || [];
+      const ppl = fileData.people || [];
       const splits = {};
       if(ppl.length === 2){
         const [a,b] = ppl;
@@ -903,8 +919,8 @@
     // ---------- Computations & Rendering ----------
     // CHANGED: computeTotals now shows what each person ACTUALLY PAID (sum by payer), not split shares
     function computeTotals(){
-      const perPerson = Object.fromEntries((data.people||[]).map(p=>[p,0]));
-      const perCategory = Object.fromEntries((data.categories||[]).map(c=>[c,0]));
+      const perPerson = Object.fromEntries((fileData.people||[]).map(p=>[p,0]));
+      const perCategory = Object.fromEntries((fileData.categories||[]).map(c=>[c,0]));
       let grand=0;
       for(const e of (data.expenses||[])){
         const amount = +e.amount || 0;
@@ -921,7 +937,7 @@
 
     // CHANGED: computeSettlements uses PAID vs OWED (OWED from splits), not equal-share-of-grand-total
     function computeSettlements(){
-      const people = (data.people||[]);
+      const people = (fileData.people||[]);
       const paid = Object.fromEntries(people.map(p=>[p,0]));
       const owed = Object.fromEntries(people.map(p=>[p,0]));
       let grand = 0;
@@ -977,27 +993,27 @@
 
     function renderPeopleCats(){
       peopleChips.innerHTML = '';
-      for(const p of (data.people||[])){
+      for(const p of (fileData.people||[])){
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+p+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove '+p+' and their expenses?')) { removePerson(p); }});
+        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove '+p+' and their expenses from ALL months?')) { removePerson(p); }});
         peopleChips.appendChild(c);
       }
       categoriesChips.innerHTML = '';
-      for(const cName of (data.categories||[])){
+      for(const cName of (fileData.categories||[])){
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+cName+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category \"'+cName+'\" and related expenses?')) { removeCategory(cName); }});
+        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category \"'+cName+'\" from ALL months?')) { removeCategory(cName); }});
         categoriesChips.appendChild(c);
       }
-      fillSelect(quickPerson, (data.people||[]));
-      fillSelect(quickCategory, (data.categories||[]));
-      fillSelect(batchPerson, (data.people||[]));
+      fillSelect(quickPerson, (fileData.people||[]));
+      fillSelect(quickCategory, (fileData.categories||[]));
+      fillSelect(batchPerson, (fileData.people||[]));
       buildSplitOptions(quickSplit);
       buildSplitOptions(batchSplit);
-      [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, (data.categories||[])));
+      [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, (fileData.categories||[])));
     }
     function renderExpenses(){
       if(!(data.expenses||[]).length){
@@ -1026,9 +1042,9 @@
       const {perPerson, perCategory} = computeTotals();
       const total = perPerson.__total || 0;
       let htmlP='';
-      if((data.people||[]).length){
+      if((fileData.people||[]).length){
         htmlP += '<table><thead><tr><th>Person</th><th>Total paid this month</th></tr></thead><tbody>';
-        for(const p of (data.people||[])){
+        for(const p of (fileData.people||[])){
           htmlP += '<tr><td>'+p+'</td><td>'+euro(round2(perPerson[p]||0))+'</td></tr>';
         }
         htmlP += '</tbody><tfoot><tr><td>All people</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
@@ -1036,9 +1052,9 @@
       totalsPeople.innerHTML = htmlP;
 
       let htmlC='';
-      if((data.categories||[]).length){
+      if((fileData.categories||[]).length){
         htmlC += '<table><thead><tr><th>Category</th><th>Total</th></tr></thead><tbody>';
-        for(const c of (data.categories||[])){
+        for(const c of (fileData.categories||[])){
           htmlC += '<tr><td>'+c+'</td><td>'+euro(round2(perCategory[c]||0))+'</td></tr>';
         }
         htmlC += '</tbody><tfoot><tr><td>All categories</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
@@ -1047,7 +1063,7 @@
     }
     function renderSettlements(){
       const {share, balances, transfers} = computeSettlements();
-      if(!(data.people||[]).length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
+      if(!(fileData.people||[]).length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
       let html = '<div class="row"><div>Equal share per person (based on splits): <strong>'+euro(share)+'</strong></div></div>';
       html += '<table><thead><tr><th>Person</th><th>Balance (positive = others owe them, negative = they owe others)</th></tr></thead><tbody>';
       for(const b of balances){
@@ -1133,9 +1149,12 @@
         return;
       }
       if(rows && rows.length){
-        fileData = rows[0].data || { months: {} };
+        fileData = rows[0].data || { people: [], categories: [], months: {} };
+        // Ensure people and categories arrays exist
+        if(!fileData.people) fileData.people = [];
+        if(!fileData.categories) fileData.categories = [];
       } else {
-        fileData = { months: {} };
+        fileData = { people: [], categories: [], months: {} };
         await saveRemote();
       }
     }
@@ -1169,17 +1188,14 @@
         authStatus.textContent = 'Not signed in.';
       }
       setModeBadge();
-      populateCopySource();
     }
 
     // Import / Export
     function importJSON(obj){
   function normaliseMonth(x){
-    if(!x || typeof x !== 'object') return {people:[], categories:[], expenses:[], lastEdited:new Date().toISOString()};
+    if(!x || typeof x !== 'object') return {expenses:[], lastEdited:new Date().toISOString()};
     const src = x.data && typeof x.data==='object' ? x.data : x;
     return {
-      people: Array.isArray(src.people) ? src.people.map(String) : [],
-      categories: Array.isArray(src.categories) ? src.categories.map(String) : [],
       expenses: Array.isArray(src.expenses) ? src.expenses.map(e=>({
         payer: e.payer || e.person || '',
         category: e.category || '',
@@ -1192,16 +1208,46 @@
   }
 
   const nowMonth = monthEl.value || thisMonthValue();
+  const allPeople = new Set(fileData.people || []);
+  const allCategories = new Set(fileData.categories || []);
+
+  // Check if import has global people/categories structure
+  if(obj && obj.people && Array.isArray(obj.people)){
+    obj.people.forEach(p => allPeople.add(String(p).trim()));
+  }
+  if(obj && obj.categories && Array.isArray(obj.categories)){
+    obj.categories.forEach(c => allCategories.add(String(c).trim()));
+  }
 
   if(obj && obj.months && typeof obj.months === 'object'){
     for(const [m, val] of Object.entries(obj.months)){
+      const src = val.data && typeof val.data==='object' ? val.data : val;
+      // Extract people and categories from old format
+      if(Array.isArray(src.people)){
+        src.people.forEach(p => allPeople.add(String(p).trim()));
+      }
+      if(Array.isArray(src.categories)){
+        src.categories.forEach(c => allCategories.add(String(c).trim()));
+      }
       fileData.months[m] = normaliseMonth(val);
     }
   } else if (obj && (obj.people || obj.categories || obj.expenses || obj.data)){
+    const src = obj.data && typeof obj.data==='object' ? obj.data : obj;
+    if(Array.isArray(src.people)){
+      src.people.forEach(p => allPeople.add(String(p).trim()));
+    }
+    if(Array.isArray(src.categories)){
+      src.categories.forEach(c => allCategories.add(String(c).trim()));
+    }
     fileData.months[nowMonth] = normaliseMonth(obj);
   } else {
     throw new Error('This file is valid JSON but not a recognised Family Accounts export.');
   }
+
+  // Update global people and categories
+  fileData.people = Array.from(allPeople).filter(Boolean);
+  fileData.categories = Array.from(allCategories).filter(Boolean);
+  saveGlobalToLocal();
 
   for(const m of Object.keys(fileData.months)){
     try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
@@ -1257,7 +1303,11 @@ importInput.addEventListener('change', async (e)=>{
         if(!raw) continue;
         try{ months[m] = JSON.parse(raw); }catch{}
       }
-      return { months };
+      return {
+        people: fileData.people || [],
+        categories: fileData.categories || [],
+        months
+      };
     }
 
     function exportJSON(){
@@ -1276,14 +1326,16 @@ importInput.addEventListener('change', async (e)=>{
     // ---------- Month switching ----------
     async function switchMonthSafely(targetMonth){
       if(targetMonth === lastLoadedMonth) return;
-      lastMonthSnapshot = data ? {people:[...(data.people||[])], categories:[...(data.categories||[])]} : null;
       if(monthExists(targetMonth)){
         await loadFromFileOrLocal(targetMonth);
       } else {
-        const base = lastMonthSnapshot || {people:[], categories:[]};
-        const fresh = defaultData(base);
-        if(fileHandle){ fileData.months[targetMonth] = fresh; await writeFileJSON(fileHandle, fileData); }
-        else { localStorage.setItem(keyFor(targetMonth), JSON.stringify(fresh)); }
+        // Create new month with empty expenses (people/categories are global now)
+        const fresh = defaultData();
+        if(currentUser){
+          fileData.months[targetMonth] = fresh;
+        } else {
+          localStorage.setItem(keyFor(targetMonth), JSON.stringify(fresh));
+        }
         data = fresh;
       }
       lastLoadedMonth = targetMonth;
@@ -1299,21 +1351,77 @@ importInput.addEventListener('change', async (e)=>{
 
     function save(){ setLastEditedNow(); persist(); }
     function addPerson(name){
-      name = (name||'').trim(); if(!name) return; if((data.people||[]).includes(name)) return;
-      (data.people = data.people||[]).push(name); save(); renderPeopleCats();
+      name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
+      (fileData.people = fileData.people||[]).push(name); saveGlobalToLocal(); renderPeopleCats();
     }
     function removePerson(name){
-      data.people = (data.people||[]).filter(p=>p!==name);
+      // Remove from global list
+      fileData.people = (fileData.people||[]).filter(p=>p!==name);
+      saveGlobalToLocal();
+
+      // Remove from current month expenses
       data.expenses = (data.expenses||[]).filter(e=>e.payer!==name && e.person!==name);
+
+      // If using Supabase, remove from all months
+      if(currentUser && fileData.months){
+        for(const month in fileData.months){
+          if(fileData.months[month] && fileData.months[month].expenses){
+            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
+          }
+        }
+      } else {
+        // If using local storage, clean up all saved months
+        for(const month of listSavedMonthsLocal()){
+          const raw = localStorage.getItem(keyFor(month));
+          if(raw){
+            try{
+              const monthData = JSON.parse(raw);
+              if(monthData.expenses){
+                monthData.expenses = monthData.expenses.filter(e=>e.payer!==name && e.person!==name);
+                localStorage.setItem(keyFor(month), JSON.stringify(monthData));
+              }
+            }catch{}
+          }
+        }
+      }
+
       save(); renderAll();
     }
     function addCategory(name){
-      name = (name||'').trim(); if(!name) return; if((data.categories||[]).includes(name)) return;
-      (data.categories = data.categories||[]).push(name); save(); renderPeopleCats();
+      name = (name||'').trim(); if(!name) return; if((fileData.categories||[]).includes(name)) return;
+      (fileData.categories = fileData.categories||[]).push(name); saveGlobalToLocal(); renderPeopleCats();
     }
     function removeCategory(name){
-      data.categories = (data.categories||[]).filter(c=>c!==name);
+      // Remove from global list
+      fileData.categories = (fileData.categories||[]).filter(c=>c!==name);
+      saveGlobalToLocal();
+
+      // Remove from current month expenses
       data.expenses = (data.expenses||[]).filter(e=>e.category!==name);
+
+      // If using Supabase, remove from all months
+      if(currentUser && fileData.months){
+        for(const month in fileData.months){
+          if(fileData.months[month] && fileData.months[month].expenses){
+            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
+          }
+        }
+      } else {
+        // If using local storage, clean up all saved months
+        for(const month of listSavedMonthsLocal()){
+          const raw = localStorage.getItem(keyFor(month));
+          if(raw){
+            try{
+              const monthData = JSON.parse(raw);
+              if(monthData.expenses){
+                monthData.expenses = monthData.expenses.filter(e=>e.category!==name);
+                localStorage.setItem(keyFor(month), JSON.stringify(monthData));
+              }
+            }catch{}
+          }
+        }
+      }
+
       save(); renderAll();
     }
     function parseAmounts(text){
@@ -1343,7 +1451,7 @@ importInput.addEventListener('change', async (e)=>{
         <div class="col" style="width:160px"><label>Amount</label><input class="batchAmount" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/></div>\
         <div class="col" style="flex:1;min-width:200px"><label>Note (optional)</label><input class="batchNote" type="text" placeholder="e.g., receipt #1234"/></div>\
         <button class="btn ghost removeRowBtn" type="button" title="Remove">🗑️</button>';
-      const sel=row.querySelector('.batchCategory'); fillSelect(sel, (data.categories||[])); if(category) sel.value=category;
+      const sel=row.querySelector('.batchCategory'); fillSelect(sel, (fileData.categories||[])); if(category) sel.value=category;
       row.querySelector('.removeRowBtn').addEventListener('click',()=>row.remove());
       return row;
     }
@@ -1435,25 +1543,18 @@ importInput.addEventListener('change', async (e)=>{
       monthEl.value = initial;
       if(currentUser){
         await loadRemote();
+      } else {
+        // Load global people/categories from local storage if not using Supabase
+        loadGlobalFromLocal();
       }
       await loadFromFileOrLocal(initial);
       lastLoadedMonth = initial;
-      lastMonthSnapshot = data ? {people:[...(data.people||[])], categories:[...(data.categories||[])]} : null;
       setupCollapsibles();
       renderAll();
       renderAverages();
       updateFileStatus();
 
-      document.getElementById('copyMergeBtn').addEventListener('click', ()=>{
-        const src = document.getElementById('copySourceMonth').value; copyPeopleCategoriesFrom(src, 'merge');
-      });
-      document.getElementById('copyOverwriteBtn').addEventListener('click', ()=>{
-        const src = document.getElementById('copySourceMonth').value; if(!src) return alert('Choose a source month');
-        if(confirm('Replace current people & categories with those from '+src+'?')) copyPeopleCategoriesFrom(src, 'overwrite');
-      });
-
       monthEl.addEventListener('change', async ()=>{
-        populateCopySource();
         const target = monthEl.value;
         await switchMonthSafely(target);
         buildSplitOptions(quickSplit);
@@ -1595,7 +1696,9 @@ importInput.addEventListener('change', async (e)=>{
         try {
           await supabaseClient.auth.signOut();
           currentUser = null;
-          fileData = { months: {} };
+          fileData = { people: [], categories: [], months: {} };
+          // Load global data from local storage after signing out
+          loadGlobalFromLocal();
           updateFileStatus();
           renderAll();
           renderAverages();
