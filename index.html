@@ -1185,6 +1185,35 @@
         // Ensure people and categories arrays exist
         if(!fileData.people) fileData.people = [];
         if(!fileData.categories) fileData.categories = [];
+
+        // If Supabase data is missing people/categories, migrate from existing months
+        if(fileData.people.length === 0 && fileData.categories.length === 0){
+          console.log('Supabase data missing people/categories - extracting from existing months...');
+          const allPeople = new Set();
+          const allCategories = new Set();
+
+          // Scan all months in Supabase data for people/categories
+          if(fileData.months && typeof fileData.months === 'object'){
+            for(const [month, monthData] of Object.entries(fileData.months)){
+              if(monthData && typeof monthData === 'object'){
+                if(monthData.people && Array.isArray(monthData.people)){
+                  monthData.people.forEach(p => allPeople.add(String(p).trim()));
+                }
+                if(monthData.categories && Array.isArray(monthData.categories)){
+                  monthData.categories.forEach(c => allCategories.add(String(c).trim()));
+                }
+              }
+            }
+          }
+
+          if(allPeople.size > 0 || allCategories.size > 0){
+            fileData.people = Array.from(allPeople).filter(Boolean);
+            fileData.categories = Array.from(allCategories).filter(Boolean);
+            console.log('Migrated from Supabase months:', fileData.people.length, 'people and', fileData.categories.length, 'categories');
+            // Save updated structure back to Supabase
+            await saveRemote();
+          }
+        }
       } else {
         fileData = { people: [], categories: [], months: {} };
         await saveRemote();
