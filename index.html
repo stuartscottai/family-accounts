@@ -96,10 +96,11 @@
       <div class="card" data-section="auth">
         <div class="card-header"><div class="card-title">Supabase account</div><div class="chev">▸</div></div>
         <div class="card-content">
+          <div id="authMessage" style="display:none;padding:12px;border-radius:12px;margin-bottom:12px"></div>
           <div class="row">
             <div class="col" style="flex:1;min-width:220px">
               <label for="authEmail">Email</label>
-              <input id="authEmail" type="text" autocomplete="email" placeholder="you@example.com" />
+              <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" />
             </div>
             <div class="col" style="flex:1;min-width:220px">
               <label for="authPassword">Password</label>
@@ -109,10 +110,11 @@
           <div class="row">
             <button class="btn" id="signInBtn" type="button">Sign in</button>
             <button class="btn alt" id="signUpBtn" type="button">Sign up</button>
+            <button class="btn ghost" id="forgotPasswordBtn" type="button">Forgot password</button>
             <button class="btn ghost" id="signOutBtn" type="button">Sign out</button>
-            <div class="note" id="authStatus">Not signed in.</div>
           </div>
-          <div class="note">Sign up requires email confirmation. Your data is stored in Supabase once signed in.</div>
+          <div class="note" id="authStatus">Not signed in.</div>
+          <div class="note" style="margin-top:8px">Sign up requires email confirmation (min. 6 characters password). Your data syncs to Supabase when signed in.</div>
         </div>
       </div>
 
@@ -379,7 +381,9 @@
     const signInBtn = document.getElementById('signInBtn');
     const signUpBtn = document.getElementById('signUpBtn');
     const signOutBtn = document.getElementById('signOutBtn');
+    const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
     const authStatus = document.getElementById('authStatus');
+    const authMessage = document.getElementById('authMessage');
 
     // Import/export selectors
     const fileStatus = document.getElementById('fileStatus');
@@ -397,6 +401,36 @@
     let currentUser = null;
 
     // ---------- Supabase config ----------
+    //
+    // SETUP INSTRUCTIONS:
+    // 1. Go to https://supabase.com and create a free account
+    // 2. Create a new project (choose a region close to you)
+    // 3. Once created, go to Project Settings > API
+    // 4. Copy the "Project URL" and replace SUPABASE_URL below
+    // 5. Copy the "anon public" key and replace SUPABASE_ANON_KEY below
+    // 6. Go to SQL Editor and run this SQL to create the required table:
+    //
+    //    CREATE TABLE family_account_data (
+    //      user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    //      data JSONB NOT NULL DEFAULT '{"months": {}}'::jsonb,
+    //      updated_at TIMESTAMPTZ DEFAULT NOW()
+    //    );
+    //
+    //    -- Enable Row Level Security
+    //    ALTER TABLE family_account_data ENABLE ROW LEVEL SECURITY;
+    //
+    //    -- Policy: Users can only access their own data
+    //    CREATE POLICY "Users can manage their own data"
+    //      ON family_account_data
+    //      FOR ALL
+    //      USING (auth.uid() = user_id)
+    //      WITH CHECK (auth.uid() = user_id);
+    //
+    // 7. Go to Authentication > Settings and configure:
+    //    - Enable "Email confirmations" (recommended)
+    //    - Set "Site URL" to your app's URL
+    //    - Configure email templates if desired
+    //
     const SUPABASE_URL = 'https://YOUR_PROJECT.supabase.co';
     const SUPABASE_ANON_KEY = 'YOUR_SUPABASE_ANON_KEY';
 
@@ -432,6 +466,51 @@
     }
     function setLastEditedNow(){ if(data){ data.lastEdited = new Date().toISOString(); renderLastEdited(); } }
     function renderLastEdited(){ lastEditedEl.textContent = formatUK(data?.lastEdited); }
+
+    // ---------- Auth utilities ----------
+    function showAuthMessage(message, type = 'info'){
+      // type: 'success', 'error', 'info'
+      authMessage.textContent = message;
+      authMessage.style.display = 'block';
+      if(type === 'success'){
+        authMessage.style.background = '#ecfdf5';
+        authMessage.style.color = '#065f46';
+        authMessage.style.border = '1px solid #6ee7b7';
+      } else if(type === 'error'){
+        authMessage.style.background = '#fef2f2';
+        authMessage.style.color = '#7f1d1d';
+        authMessage.style.border = '1px solid #fca5a5';
+      } else {
+        authMessage.style.background = '#eff6ff';
+        authMessage.style.color = '#1e3a8a';
+        authMessage.style.border = '1px solid #bfdbfe';
+      }
+      // Auto-hide after 8 seconds for success/info messages
+      if(type !== 'error'){
+        setTimeout(() => { authMessage.style.display = 'none'; }, 8000);
+      }
+    }
+    function hideAuthMessage(){ authMessage.style.display = 'none'; }
+    function validateEmail(email){
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return re.test(email);
+    }
+    function validatePassword(password){
+      return password && password.length >= 6;
+    }
+    function setButtonLoading(button, isLoading){
+      if(isLoading){
+        button.disabled = true;
+        button.dataset.originalText = button.textContent;
+        button.textContent = '⏳ Loading...';
+      } else {
+        button.disabled = false;
+        if(button.dataset.originalText){
+          button.textContent = button.dataset.originalText;
+          delete button.dataset.originalText;
+        }
+      }
+    }
 
     // ---------- Collapsible cards ----------
     const COLLAPSE_KEY = 'famacct:collapsed';
@@ -1044,7 +1123,51 @@ importInput.addEventListener('change', async (e)=>{
       initSupabase();
       if(supabaseClient){
         await refreshSession();
-        supabaseClient.auth.onAuthStateChange(async (_event, session) => {
+
+        // Handle email confirmation and password reset links
+        const handleAuthCallback = async () => {
+          const hashParams = new URLSearchParams(window.location.hash.substring(1));
+          const type = hashParams.get('type');
+          const error = hashParams.get('error');
+          const errorDescription = hashParams.get('error_description');
+
+          if(error){
+            showAuthMessage(decodeURIComponent(errorDescription || error), 'error');
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+            return;
+          }
+
+          if(type === 'signup'){
+            showAuthMessage('Email confirmed! You can now sign in.', 'success');
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } else if(type === 'recovery'){
+            const newPassword = prompt('Enter your new password (min. 6 characters):');
+            if(newPassword && validatePassword(newPassword)){
+              try {
+                const { error: updateError } = await supabaseClient.auth.updateUser({ password: newPassword });
+                if(updateError){
+                  showAuthMessage(updateError.message, 'error');
+                } else {
+                  showAuthMessage('Password updated successfully! You are now signed in.', 'success');
+                  authPassword.value = '';
+                }
+              } catch(err){
+                showAuthMessage('Failed to update password. Please try again.', 'error');
+              }
+            } else if(newPassword){
+              showAuthMessage('Password must be at least 6 characters long.', 'error');
+            }
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        };
+
+        // Check for auth callback on page load
+        if(window.location.hash){
+          await handleAuthCallback();
+        }
+
+        supabaseClient.auth.onAuthStateChange(async (event, session) => {
           currentUser = session?.user || null;
           if(currentUser){
             await loadRemote();
@@ -1053,6 +1176,14 @@ importInput.addEventListener('change', async (e)=>{
           updateFileStatus();
           renderAll();
           renderAverages();
+
+          // Handle specific auth events
+          if(event === 'SIGNED_IN' && !window.location.hash){
+            // Only show if not from callback (callback shows its own message)
+            authStatus.textContent = `Signed in as ${currentUser?.email || ''}`;
+          } else if(event === 'SIGNED_OUT'){
+            authStatus.textContent = 'Not signed in.';
+          }
         });
       }
       const initial = thisMonthValue();
@@ -1129,38 +1260,158 @@ importInput.addEventListener('change', async (e)=>{
       exportBtn.addEventListener('click', exportJSON);
 
       signInBtn.addEventListener('click', async ()=>{
-        if(!supabaseClient){ alert('Supabase is not configured.'); return; }
+        hideAuthMessage();
+        if(!supabaseClient){
+          showAuthMessage('Supabase is not configured. Please add your credentials to the code.', 'error');
+          return;
+        }
         const email = authEmail.value.trim();
         const password = authPassword.value;
-        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
-        if(error){ alert(error.message); return; }
-        await refreshSession();
-        await loadRemote();
-        await loadFromFileOrLocal(monthEl.value);
-        updateFileStatus();
-        renderAll();
-        renderAverages();
-        authStatus.textContent = `Signed in as ${currentUser?.email || ''}`;
+
+        // Validation
+        if(!email || !password){
+          showAuthMessage('Please enter both email and password.', 'error');
+          return;
+        }
+        if(!validateEmail(email)){
+          showAuthMessage('Please enter a valid email address.', 'error');
+          return;
+        }
+
+        setButtonLoading(signInBtn, true);
+        try {
+          const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+          if(error){
+            showAuthMessage(error.message, 'error');
+            return;
+          }
+          await refreshSession();
+          await loadRemote();
+          await loadFromFileOrLocal(monthEl.value);
+          updateFileStatus();
+          renderAll();
+          renderAverages();
+          showAuthMessage(`Successfully signed in as ${currentUser?.email || ''}`, 'success');
+          authPassword.value = ''; // Clear password field
+        } finally {
+          setButtonLoading(signInBtn, false);
+        }
       });
 
       signUpBtn.addEventListener('click', async ()=>{
-        if(!supabaseClient){ alert('Supabase is not configured.'); return; }
+        hideAuthMessage();
+        if(!supabaseClient){
+          showAuthMessage('Supabase is not configured. Please add your credentials to the code.', 'error');
+          return;
+        }
         const email = authEmail.value.trim();
         const password = authPassword.value;
-        const { error } = await supabaseClient.auth.signUp({ email, password });
-        if(error){ alert(error.message); return; }
-        authStatus.textContent = 'Check your email to confirm your account, then sign in.';
+
+        // Validation
+        if(!email || !password){
+          showAuthMessage('Please enter both email and password.', 'error');
+          return;
+        }
+        if(!validateEmail(email)){
+          showAuthMessage('Please enter a valid email address.', 'error');
+          return;
+        }
+        if(!validatePassword(password)){
+          showAuthMessage('Password must be at least 6 characters long.', 'error');
+          return;
+        }
+
+        setButtonLoading(signUpBtn, true);
+        try {
+          const { data, error } = await supabaseClient.auth.signUp({ email, password });
+          if(error){
+            showAuthMessage(error.message, 'error');
+            return;
+          }
+
+          // Check if email confirmation is required
+          if(data?.user && !data.session){
+            showAuthMessage('Account created! Check your email to confirm your account, then sign in.', 'success');
+            authPassword.value = ''; // Clear password field
+          } else if(data?.session){
+            // Auto-confirmation is enabled, user is already signed in
+            showAuthMessage('Account created and signed in successfully!', 'success');
+            authPassword.value = '';
+          }
+        } finally {
+          setButtonLoading(signUpBtn, false);
+        }
       });
 
       signOutBtn.addEventListener('click', async ()=>{
         if(!supabaseClient){ return; }
-        await supabaseClient.auth.signOut();
-        currentUser = null;
-        fileData = { months: {} };
-        updateFileStatus();
-        renderAll();
-        renderAverages();
-        authStatus.textContent = 'Not signed in.';
+        hideAuthMessage();
+        setButtonLoading(signOutBtn, true);
+        try {
+          await supabaseClient.auth.signOut();
+          currentUser = null;
+          fileData = { months: {} };
+          updateFileStatus();
+          renderAll();
+          renderAverages();
+          showAuthMessage('Successfully signed out.', 'success');
+          authPassword.value = ''; // Clear password field
+        } finally {
+          setButtonLoading(signOutBtn, false);
+        }
+      });
+
+      forgotPasswordBtn.addEventListener('click', async ()=>{
+        hideAuthMessage();
+        if(!supabaseClient){
+          showAuthMessage('Supabase is not configured. Please add your credentials to the code.', 'error');
+          return;
+        }
+        const email = authEmail.value.trim();
+
+        // Validation
+        if(!email){
+          showAuthMessage('Please enter your email address.', 'error');
+          return;
+        }
+        if(!validateEmail(email)){
+          showAuthMessage('Please enter a valid email address.', 'error');
+          return;
+        }
+
+        if(!confirm(`Send password reset email to ${email}?`)){
+          return;
+        }
+
+        setButtonLoading(forgotPasswordBtn, true);
+        try {
+          const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+            redirectTo: window.location.origin + window.location.pathname
+          });
+          if(error){
+            showAuthMessage(error.message, 'error');
+            return;
+          }
+          showAuthMessage('Password reset email sent! Check your inbox.', 'success');
+        } finally {
+          setButtonLoading(forgotPasswordBtn, false);
+        }
+      });
+
+      // Keyboard support: Enter key on password field triggers sign in
+      authPassword.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          signInBtn.click();
+        }
+      });
+
+      // Keyboard support: Enter key on email field focuses password
+      authEmail.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          authPassword.focus();
+        }
       });
 
       // initial split options
