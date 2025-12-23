@@ -43,6 +43,15 @@
     .title{
       font-size:22px;font-weight:700;
       color:var(--text);
+      display:flex;align-items:center;gap:10px;
+    }
+    .logo{
+      width:32px;height:32px;
+      background:linear-gradient(135deg, #14b8a6, #0d9488);
+      border-radius:8px;
+      display:flex;align-items:center;justify-content:center;
+      font-size:18px;
+      flex-shrink:0;
     }
     .header-right{
       display:flex;align-items:center;gap:8px;
@@ -251,6 +260,15 @@
       color:var(--text-muted);
     }
 
+    /* Custom Range Sliders */
+    .split-sliders{display:flex;flex-direction:column;gap:12px;margin-top:8px}
+    .split-slider-row{display:flex;align-items:center;gap:12px}
+    .split-slider-row label{margin:0;flex:0 0 80px;font-size:13px}
+    .split-slider-row input[type="range"]{flex:1;-webkit-appearance:none;height:6px;border-radius:3px;background:#e5e5e5;outline:none}
+    .split-slider-row input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg, #14b8a6, #0d9488);cursor:pointer;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
+    .split-slider-row input[type="range"]::-moz-range-thumb{width:18px;height:18px;border-radius:50%;background:linear-gradient(135deg, #14b8a6, #0d9488);cursor:pointer;border:2px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.2)}
+    .split-slider-row .split-value{flex:0 0 45px;text-align:right;font-weight:600;font-size:14px;color:var(--text)}
+
     /* Mobile Optimizations */
     @media (max-width: 640px) {
       .wrap{padding:12px}
@@ -265,6 +283,8 @@
       table{font-size:13px}
       th,td{padding:10px 6px}
       .big{font-size:20px}
+      .split-slider-row label{flex:0 0 70px;font-size:12px}
+      .split-slider-row .split-value{flex:0 0 40px;font-size:13px}
     }
   </style>
 <link rel="manifest" href="/family-accounts/manifest.webmanifest?v=3" />
@@ -285,9 +305,12 @@
 <body>
   <div class="wrap">
     <div class="header">
-      <div class="title">🏦 Family Accounts</div>
+      <div class="title">
+        <div class="logo">💰</div>
+        <span>Family Accounts</span>
+      </div>
       <div class="header-right">
-        <span id="modeBadge">Mode: Local storage</span>
+        <span id="modeBadge">Local storage</span>
         <span>•</span>
         <span>Last edited: <span id="lastEdited">—</span></span>
       </div>
@@ -295,7 +318,7 @@
 
     <div class="stack" style="margin-top:14px">
       <div class="card" data-section="auth">
-        <div class="card-header"><div class="card-title">Supabase account</div><div class="chev">▸</div></div>
+        <div class="card-header"><div class="card-title">Account</div><div class="chev">▸</div></div>
         <div class="card-content">
           <div id="authMessage" style="display:none;padding:12px;border-radius:12px;margin-bottom:12px"></div>
           <div class="row">
@@ -315,26 +338,11 @@
             <button class="btn ghost" id="signOutBtn" type="button">Sign out</button>
           </div>
           <div class="note" id="authStatus">Not signed in.</div>
-          <div class="note" style="margin-top:8px">Sign up requires email confirmation (min. 6 characters password). Your data syncs to Supabase when signed in.</div>
+          <div class="note" style="margin-top:8px">Sign up requires email confirmation (min. 6 characters password). Your data syncs to the cloud when signed in.</div>
         </div>
       </div>
 
-      <details>
-        <summary>
-          <div class="summary-row">
-            <span>Import / export</span>
-            <span class="tag" id="fileStatus">Local-only (not signed in)</span>
-          </div>
-        </summary>
-        <div class="row" style="margin-top:8px">
-          <button class="btn alt" id="importBtn" type="button">Import JSON (backup)</button>
-          <input type="file" id="importInput" accept="application/json" style="display:none" />
-          <button class="btn alt" id="exportBtn" type="button">Export JSON (backup)</button>
-        </div>
-        <div class="note">Importing a backup will merge all months into your current storage mode.</div>
-      </details>
-
-      <!-- NEW: Month picker in its own box -->
+      <!-- Month picker -->
       <div class="card" data-section="month">
         <div class="card-header"><div class="card-title">Month</div><div class="chev">▸</div></div>
         <div class="card-content">
@@ -385,10 +393,10 @@
                 <label>Category</label>
                 <select id="quickCategory"></select>
               </div>
-              <div class="col" style="min-width:180px;flex:1">
-                <label>Split</label>
-                <select id="quickSplit"></select>
-              </div>
+            </div>
+            <div class="col" style="width:100%">
+              <label>Split between people</label>
+              <div id="quickSplitSliders" class="split-sliders"></div>
             </div>
             <div class="row">
               <div class="col" style="flex:1">
@@ -415,10 +423,10 @@
                 <label>Payer</label>
                 <select id="batchPerson"></select>
               </div>
-              <div class="col" style="min-width:180px;flex:1">
-                <label>Split</label>
-                <select id="batchSplit"></select>
-              </div>
+            </div>
+            <div class="col" style="width:100%">
+              <label>Split between people</label>
+              <div id="batchSplitSliders" class="split-sliders"></div>
             </div>
             <div id="batchRows"></div>
             <div class="row">
@@ -529,13 +537,13 @@
     const quickPerson = document.getElementById('quickPerson');
     theQuickCategory = document.getElementById('quickCategory'); // keep old id name; variable name typo fixed below
     const quickCategory = document.getElementById('quickCategory');
-    const quickSplit = document.getElementById('quickSplit');
+    const quickSplitSliders = document.getElementById('quickSplitSliders');
     const quickAmounts = document.getElementById('quickAmounts');
     const addQuickBtn = document.getElementById('addQuickBtn');
     const clearQuickBtn = document.getElementById('clearQuickBtn');
 
     const batchPerson = document.getElementById('batchPerson');
-    const batchSplit = document.getElementById('batchSplit');
+    const batchSplitSliders = document.getElementById('batchSplitSliders');
     const batchRows = document.getElementById('batchRows');
     const addBatchRowBtn = document.getElementById('addBatchRowBtn');
     const saveBatchBtn = document.getElementById('saveBatchBtn');
@@ -567,12 +575,6 @@
     const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
     const authStatus = document.getElementById('authStatus');
     const authMessage = document.getElementById('authMessage');
-
-    // Import/export selectors
-    const fileStatus = document.getElementById('fileStatus');
-    const importBtn = document.getElementById('importBtn');
-    const exportBtn = document.getElementById('exportBtn');
-    const importInput = document.getElementById('importInput');
 
     // ---------- App state ----------
     let data = null; // current month data (only expenses and lastEdited)
@@ -631,10 +633,10 @@
     function debounceSave(){ clearTimeout(saveDebounce); saveDebounce = setTimeout(()=>persist(), 400); }
     function setModeBadge(){
       if(currentUser){
-        modeBadge.textContent = `Mode: Supabase — ${currentUser.email}`;
+        modeBadge.textContent = `Signed in: ${currentUser.email}`;
         return;
       }
-      modeBadge.textContent = 'Mode: Local storage (not signed in)';
+      modeBadge.textContent = 'Local storage';
     }
     function formatUK(iso){
       if(!iso) return '—';
@@ -856,7 +858,6 @@
         fileData.months[monthEl.value] = data;
         saveRemote().catch(err=>{
           console.error(err);
-          fileStatus.textContent = 'Supabase save failed (working locally)';
         });
       } else {
         saveGlobalToLocal();
@@ -868,35 +869,85 @@
     function uniqueList(arr){ return Array.from(new Set((arr||[]).map(s=>String(s).trim()).filter(Boolean))); }
 
     // ---------- Split helpers ----------
-    function buildSplitOptions(selectEl){
+    function buildSplitSliders(containerEl){
       const ppl = fileData.people || [];
-      selectEl.innerHTML='';
-      if(ppl.length === 2){
-        const [a,b] = ppl;
-        [[`50_50`,`50/50`],[`100_${a}`,`${a} 100%`],[`100_${b}`,`${b} 100%`]].forEach(([v,l])=>{
-          const o=document.createElement('option'); o.value=v; o.textContent=l; selectEl.appendChild(o);
+      containerEl.innerHTML='';
+      if(ppl.length === 0) return;
+
+      // Create a slider for each person
+      ppl.forEach((person, index) => {
+        const row = document.createElement('div');
+        row.className = 'split-slider-row';
+
+        const label = document.createElement('label');
+        label.textContent = person;
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0';
+        slider.max = '100';
+        slider.value = Math.floor(100 / ppl.length);
+        slider.dataset.person = person;
+        slider.className = 'split-slider';
+
+        const valueDisplay = document.createElement('span');
+        valueDisplay.className = 'split-value';
+        valueDisplay.textContent = slider.value + '%';
+
+        // Update display when slider changes
+        slider.addEventListener('input', (e) => {
+          valueDisplay.textContent = e.target.value + '%';
+          // Auto-adjust other sliders to maintain 100% total
+          autoAdjustSliders(containerEl, person);
         });
-      } else {
-        const o1=document.createElement('option'); o1.value='equal_all'; o1.textContent='Equal among all people'; selectEl.appendChild(o1);
-        const o2=document.createElement('option'); o2.value='payer_100'; o2.textContent='Payer 100%'; selectEl.appendChild(o2);
-      }
+
+        row.appendChild(label);
+        row.appendChild(slider);
+        row.appendChild(valueDisplay);
+        containerEl.appendChild(row);
+      });
     }
-    function computeSplitsFromChoice(choice, payer){
-      const ppl = fileData.people || [];
-      const splits = {};
-      if(ppl.length === 2){
-        const [a,b] = ppl;
-        if(choice==='50_50'){ splits[a]=50; splits[b]=50; }
-        else if(choice===`100_${a}`){ splits[a]=100; splits[b]=0; }
-        else if(choice===`100_${b}`){ splits[a]=0; splits[b]=100; }
-        else { splits[a]=50; splits[b]=50; }
-      } else {
-        if(choice==='payer_100' && payer){ ppl.forEach(p=>splits[p]= (p===payer?100:0)); }
-        else { // equal_all
-          const share = Math.floor(100/ppl.length);
-          let sum=0; for(let i=0;i<ppl.length;i++){ splits[ppl[i]] = (i===ppl.length-1) ? 100-sum : share; sum+=share; }
+
+    function autoAdjustSliders(containerEl, changedPerson){
+      const sliders = containerEl.querySelectorAll('.split-slider');
+      const values = {};
+      let total = 0;
+
+      // Get all current values
+      sliders.forEach(slider => {
+        const val = parseInt(slider.value);
+        values[slider.dataset.person] = val;
+        total += val;
+      });
+
+      // If total is not 100, adjust other sliders proportionally
+      if(total !== 100 && sliders.length > 1){
+        const diff = total - 100;
+        const others = Array.from(sliders).filter(s => s.dataset.person !== changedPerson);
+
+        if(others.length > 0){
+          // Distribute the difference among other sliders
+          const adjustment = Math.floor(diff / others.length);
+          let remaining = diff;
+
+          others.forEach((slider, index) => {
+            const currentVal = parseInt(slider.value);
+            const adj = (index === others.length - 1) ? remaining : adjustment;
+            const newVal = Math.max(0, Math.min(100, currentVal - adj));
+            slider.value = newVal;
+            slider.nextElementSibling.textContent = newVal + '%';
+            remaining -= adj;
+          });
         }
       }
+    }
+
+    function getSplitsFromSliders(containerEl){
+      const splits = {};
+      const sliders = containerEl.querySelectorAll('.split-slider');
+      sliders.forEach(slider => {
+        splits[slider.dataset.person] = parseInt(slider.value);
+      });
       return splits;
     }
     function splitsToLabel(splits){
@@ -999,8 +1050,8 @@
       fillSelect(quickPerson, (fileData.people||[]));
       fillSelect(quickCategory, (fileData.categories||[]));
       fillSelect(batchPerson, (fileData.people||[]));
-      buildSplitOptions(quickSplit);
-      buildSplitOptions(batchSplit);
+      buildSplitSliders(quickSplitSliders);
+      buildSplitSliders(batchSplitSliders);
       [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, (fileData.categories||[])));
     }
     function renderExpenses(){
@@ -1196,148 +1247,13 @@
       setModeBadge();
     }
 
-    function updateFileStatus(){
+    function updateAuthStatus(){
       if(currentUser){
-        fileStatus.textContent = 'Supabase storage';
         authStatus.textContent = `Signed in as ${currentUser.email}`;
       } else {
-        fileStatus.textContent = 'Local-only (not signed in)';
         authStatus.textContent = 'Not signed in.';
       }
       setModeBadge();
-    }
-
-    // Import / Export
-    function importJSON(obj){
-  function normaliseMonth(x){
-    if(!x || typeof x !== 'object') return {expenses:[], lastEdited:new Date().toISOString()};
-    const src = x.data && typeof x.data==='object' ? x.data : x;
-    return {
-      expenses: Array.isArray(src.expenses) ? src.expenses.map(e=>({
-        payer: e.payer || e.person || '',
-        category: e.category || '',
-        amount: typeof e.amount === 'string' ? parseFloat(e.amount.replace(',','.')) : (+e.amount||0),
-        note: e.note || '',
-        splits: (e.splits && typeof e.splits==='object') ? e.splits : (e.payer||e.person ? {[e.payer||e.person]:100} : {})
-      })) : [],
-      lastEdited: src.lastEdited || new Date().toISOString()
-    };
-  }
-
-  const nowMonth = monthEl.value || thisMonthValue();
-  const allPeople = new Set(fileData.people || []);
-  const allCategories = new Set(fileData.categories || []);
-
-  // Check if import has global people/categories structure
-  if(obj && obj.people && Array.isArray(obj.people)){
-    obj.people.forEach(p => allPeople.add(String(p).trim()));
-  }
-  if(obj && obj.categories && Array.isArray(obj.categories)){
-    obj.categories.forEach(c => allCategories.add(String(c).trim()));
-  }
-
-  if(obj && obj.months && typeof obj.months === 'object'){
-    for(const [m, val] of Object.entries(obj.months)){
-      const src = val.data && typeof val.data==='object' ? val.data : val;
-      // Extract people and categories from old format
-      if(Array.isArray(src.people)){
-        src.people.forEach(p => allPeople.add(String(p).trim()));
-      }
-      if(Array.isArray(src.categories)){
-        src.categories.forEach(c => allCategories.add(String(c).trim()));
-      }
-      fileData.months[m] = normaliseMonth(val);
-    }
-  } else if (obj && (obj.people || obj.categories || obj.expenses || obj.data)){
-    const src = obj.data && typeof obj.data==='object' ? obj.data : obj;
-    if(Array.isArray(src.people)){
-      src.people.forEach(p => allPeople.add(String(p).trim()));
-    }
-    if(Array.isArray(src.categories)){
-      src.categories.forEach(c => allCategories.add(String(c).trim()));
-    }
-    fileData.months[nowMonth] = normaliseMonth(obj);
-  } else {
-    throw new Error('This file is valid JSON but not a recognised Family Accounts export.');
-  }
-
-  // Update global people and categories
-  fileData.people = Array.from(allPeople).filter(Boolean);
-  fileData.categories = Array.from(allCategories).filter(Boolean);
-  saveGlobalToLocal();
-
-  for(const m of Object.keys(fileData.months)){
-    try{ localStorage.setItem(keyFor(m), JSON.stringify(fileData.months[m])); }catch{}
-  }
-  if(currentUser){ saveRemote().catch(()=>{}); }
-  if(fileData.months[nowMonth]){ data = fileData.months[nowMonth]; }
-  renderAll();
-  renderAverages();
-}
-
-importBtn.addEventListener('click', ()=> importInput.click());
-
-importInput.addEventListener('change', async (e)=>{
-  const f = e.target.files && e.target.files[0];
-  if(!f) return;
-  try{
-    const rawText = await f.text();
-    const text = String(rawText).replace(/^\uFEFF/, '').trim();
-
-    const head = text.slice(0, 200).toLowerCase();
-    if(head.includes('<!doctype') || head.includes('<html')){
-      alert('That file looks like an HTML page, not JSON. If downloading from GitHub, click "Raw" before saving.');
-      return;
-    }
-
-    let obj;
-    try {
-      obj = JSON.parse(text);
-    } catch {
-      const stripped = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-      obj = JSON.parse(stripped);
-    }
-
-    importJSON(obj);
-    alert('Import complete!');
-
-  }catch(err){
-    alert('Could not read that JSON.');
-    console.error(err);
-  } finally {
-    importInput.value = '';
-  }
-});
-
-
-    function buildExportPayload(){
-      if(currentUser){
-        return fileData;
-      }
-      const months = {};
-      for(const m of listSavedMonthsLocal()){
-        const raw = localStorage.getItem(keyFor(m));
-        if(!raw) continue;
-        try{ months[m] = JSON.parse(raw); }catch{}
-      }
-      return {
-        people: fileData.people || [],
-        categories: fileData.categories || [],
-        months
-      };
-    }
-
-    function exportJSON(){
-      const payload = buildExportPayload();
-      const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `family-accounts-backup-${new Date().toISOString().slice(0,10)}.json`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
     }
 
     // ---------- Month switching ----------
@@ -1455,8 +1371,7 @@ importInput.addEventListener('change', async (e)=>{
       const amounts = parseAmounts(quickAmounts.value);
       if(!amounts.length){ alert('Add at least one amount'); return; }
       const note = document.getElementById('quickNote') ? document.getElementById('quickNote').value.trim() : '';
-      const choice = quickSplit.value || '50_50';
-      const splits = computeSplitsFromChoice(choice, payer);
+      const splits = getSplitsFromSliders(quickSplitSliders);
       for(const a of amounts){ if(a<=0) continue; (data.expenses = data.expenses||[]).push({payer, category, amount: round2(+a), note, splits}); }
       save(); renderAll(); quickAmounts.value='';
     }
@@ -1475,8 +1390,7 @@ importInput.addEventListener('change', async (e)=>{
     function saveBatch(){
       const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
       const rows=[...batchRows.querySelectorAll('.row')]; if(!rows.length){ alert('Add at least one line'); return; }
-      const choice = batchSplit.value || '50_50';
-      const splits = computeSplitsFromChoice(choice, payer);
+      const splits = getSplitsFromSliders(batchSplitSliders);
       let added=0;
       for(const r of rows){
         const cat=r.querySelector('.batchCategory').value;
@@ -1543,7 +1457,7 @@ importInput.addEventListener('change', async (e)=>{
             await loadRemote();
             await loadFromFileOrLocal(monthEl.value);
           }
-          updateFileStatus();
+          updateAuthStatus();
           renderAll();
           renderAverages();
 
@@ -1569,18 +1483,18 @@ importInput.addEventListener('change', async (e)=>{
       setupCollapsibles();
       renderAll();
       renderAverages();
-      updateFileStatus();
+      updateAuthStatus();
 
       monthEl.addEventListener('change', async ()=>{
         const target = monthEl.value;
         await switchMonthSafely(target);
-        buildSplitOptions(quickSplit);
-        buildSplitOptions(batchSplit);
+        buildSplitSliders(quickSplitSliders);
+        buildSplitSliders(batchSplitSliders);
       });
 
       addPersonBtn.addEventListener('click', ()=>{
         const v = personNameEl.value; personNameEl.value=''; addPerson(v); personNameEl.focus();
-        buildSplitOptions(quickSplit); buildSplitOptions(batchSplit);
+        buildSplitSliders(quickSplitSliders); buildSplitSliders(batchSplitSliders);
       });
       personNameEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ addPersonBtn.click(); }});
 
@@ -1620,8 +1534,6 @@ importInput.addEventListener('change', async (e)=>{
         }
       });
 
-      exportBtn.addEventListener('click', exportJSON);
-
       signInBtn.addEventListener('click', async ()=>{
         hideAuthMessage();
         if(!supabaseClient){
@@ -1651,7 +1563,7 @@ importInput.addEventListener('change', async (e)=>{
           await refreshSession();
           await loadRemote();
           await loadFromFileOrLocal(monthEl.value);
-          updateFileStatus();
+          updateAuthStatus();
           renderAll();
           renderAverages();
           showAuthMessage(`Successfully signed in as ${currentUser?.email || ''}`, 'success');
@@ -1716,7 +1628,7 @@ importInput.addEventListener('change', async (e)=>{
           fileData = { people: [], categories: [], months: {} };
           // Load global data from local storage after signing out
           loadGlobalFromLocal();
-          updateFileStatus();
+          updateAuthStatus();
           renderAll();
           renderAverages();
           showAuthMessage('Successfully signed out.', 'success');
@@ -1780,8 +1692,8 @@ importInput.addEventListener('change', async (e)=>{
       });
 
       // initial split options
-      buildSplitOptions(quickSplit);
-      buildSplitOptions(batchSplit);
+      buildSplitSliders(quickSplitSliders);
+      buildSplitSliders(batchSplitSliders);
     });
   </script>
 </body>
