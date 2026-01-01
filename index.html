@@ -293,14 +293,6 @@
 <link rel="icon" href="/family-accounts/favicon-48.png" sizes="48x48" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-<script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/family-accounts/service-worker.js")
-        .catch(err => console.error("SW registration failed:", err));
-    });
-  }
-</script>
 </head>
 <body>
   <div class="wrap">
@@ -852,13 +844,16 @@
       }
     }
 
-    function persist(){
+    async function persist(){
       try{ localSaveCurrent(); }catch{}
       if(currentUser){
         fileData.months[monthEl.value] = data;
-        saveRemote().catch(err=>{
-          console.error(err);
-        });
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
       } else {
         saveGlobalToLocal();
       }
@@ -1036,7 +1031,7 @@
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+p+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove '+p+' and their expenses from ALL months?')) { removePerson(p); }});
+        c.querySelector('.x').addEventListener('click', async ()=>{ if(confirm('Remove '+p+' and their expenses from ALL months?')) { await removePerson(p); }});
         peopleChips.appendChild(c);
       }
       categoriesChips.innerHTML = '';
@@ -1044,7 +1039,7 @@
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+cName+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category \"'+cName+'\" from ALL months?')) { removeCategory(cName); }});
+        c.querySelector('.x').addEventListener('click', async ()=>{ if(confirm('Remove category \"'+cName+'\" from ALL months?')) { await removeCategory(cName); }});
         categoriesChips.appendChild(c);
       }
       fillSelect(quickPerson, (fileData.people||[]));
@@ -1072,7 +1067,7 @@
         const payer = e.payer || e.person || '';
         const splitTxt = splitsToLabel(e.splits||{[payer]:100});
         tr.innerHTML = '<td>'+ (i++) +'</td><td>'+payer+'</td><td>'+e.category+'</td><td>'+(e.note?String(e.note).replace(/</g,'&lt;'):'')+'</td><td>'+euro(+e.amount||0)+'</td><td>'+splitTxt+'</td><td><button class="btn ghost" title="Delete" data-i="'+idx+'" type="button">🗑️</button></td>';
-        tr.querySelector('button').addEventListener('click',()=>{ (data.expenses||[]).splice(idx,1); save(); renderAll(); });
+        tr.querySelector('button').addEventListener('click', async ()=>{ (data.expenses||[]).splice(idx,1); await save(); renderAll(); });
         expensesBody.appendChild(tr);
       }
       totalCell.textContent = euro(round2(total));
@@ -1229,9 +1224,11 @@
 
     async function saveRemote(){
       if(!supabaseClient || !currentUser) return;
+      // Capture fileData snapshot immediately to prevent corruption if fileData is reset during save
+      const dataSnapshot = JSON.parse(JSON.stringify(fileData));
       const payload = {
         user_id: currentUser.id,
-        data: fileData,
+        data: dataSnapshot,
         updated_at: new Date().toISOString()
       };
       const { error } = await supabaseClient
@@ -1274,7 +1271,7 @@
       lastLoadedMonth = targetMonth;
       monthEl.value = targetMonth;
       renderLastEdited();
-      persist();
+      await persist();
       renderAll();
     }
 
@@ -1282,12 +1279,22 @@
     function setMonthToNow(){ monthEl.value = thisMonthValue(); }
     function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
 
-    function save(){ setLastEditedNow(); persist(); }
-    function addPerson(name){
+    async function save(){ setLastEditedNow(); await persist(); }
+    async function addPerson(name){
       name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
-      (fileData.people = fileData.people||[]).push(name); saveGlobalToLocal(); renderPeopleCats();
+      (fileData.people = fileData.people||[]).push(name);
+      saveGlobalToLocal();
+      if(currentUser){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync person to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      }
+      renderPeopleCats();
     }
-    function removePerson(name){
+    async function removePerson(name){
       // Remove from global list
       fileData.people = (fileData.people||[]).filter(p=>p!==name);
       saveGlobalToLocal();
@@ -1301,6 +1308,12 @@
           if(fileData.months[month] && fileData.months[month].expenses){
             fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
           }
+        }
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync person removal to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
         }
       } else {
         // If using local storage, clean up all saved months
@@ -1318,13 +1331,23 @@
         }
       }
 
-      save(); renderAll();
+      await save(); renderAll();
     }
-    function addCategory(name){
+    async function addCategory(name){
       name = (name||'').trim(); if(!name) return; if((fileData.categories||[]).includes(name)) return;
-      (fileData.categories = fileData.categories||[]).push(name); saveGlobalToLocal(); renderPeopleCats();
+      (fileData.categories = fileData.categories||[]).push(name);
+      saveGlobalToLocal();
+      if(currentUser){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync category to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      }
+      renderPeopleCats();
     }
-    function removeCategory(name){
+    async function removeCategory(name){
       // Remove from global list
       fileData.categories = (fileData.categories||[]).filter(c=>c!==name);
       saveGlobalToLocal();
@@ -1338,6 +1361,12 @@
           if(fileData.months[month] && fileData.months[month].expenses){
             fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
           }
+        }
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync category removal to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
         }
       } else {
         // If using local storage, clean up all saved months
@@ -1355,7 +1384,7 @@
         }
       }
 
-      save(); renderAll();
+      await save(); renderAll();
     }
     function parseAmounts(text){
       const tokens = String(text).split(/[\s,;]+/).map(t=>t.trim()).filter(Boolean);
@@ -1364,7 +1393,7 @@
       return nums;
     }
 
-    function addQuickExpenses(){
+    async function addQuickExpenses(){
       const payer = quickPerson.value;
       const category = quickCategory.value;
       if(!payer || !category){ alert('Please select a person and category'); return; }
@@ -1373,7 +1402,7 @@
       const note = document.getElementById('quickNote') ? document.getElementById('quickNote').value.trim() : '';
       const splits = getSplitsFromSliders(quickSplitSliders);
       for(const a of amounts){ if(a<=0) continue; (data.expenses = data.expenses||[]).push({payer, category, amount: round2(+a), note, splits}); }
-      save(); renderAll(); quickAmounts.value='';
+      await save(); renderAll(); quickAmounts.value='';
     }
 
     function makeBatchRow(category=''){
@@ -1387,7 +1416,7 @@
       row.querySelector('.removeRowBtn').addEventListener('click',()=>row.remove());
       return row;
     }
-    function saveBatch(){
+    async function saveBatch(){
       const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
       const rows=[...batchRows.querySelectorAll('.row')]; if(!rows.length){ alert('Add at least one line'); return; }
       const splits = getSplitsFromSliders(batchSplitSliders);
@@ -1399,7 +1428,7 @@
         if(cat && isFinite(val) && val>0){ (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits}); added++; }
       }
       if(!added){ alert('Please enter valid amounts'); return; }
-      batchRows.innerHTML=''; save(); renderAll();
+      batchRows.innerHTML=''; await save(); renderAll();
     }
 
     // ---------- Init & events ----------
@@ -1492,14 +1521,14 @@
         buildSplitSliders(batchSplitSliders);
       });
 
-      addPersonBtn.addEventListener('click', ()=>{
-        const v = personNameEl.value; personNameEl.value=''; addPerson(v); personNameEl.focus();
+      addPersonBtn.addEventListener('click', async ()=>{
+        const v = personNameEl.value; personNameEl.value=''; await addPerson(v); personNameEl.focus();
         buildSplitSliders(quickSplitSliders); buildSplitSliders(batchSplitSliders);
       });
       personNameEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ addPersonBtn.click(); }});
 
-      addCategoryBtn.addEventListener('click', ()=>{
-        const v = categoryNameEl.value; categoryNameEl.value=''; addCategory(v); categoryNameEl.focus();
+      addCategoryBtn.addEventListener('click', async ()=>{
+        const v = categoryNameEl.value; categoryNameEl.value=''; await addCategory(v); categoryNameEl.focus();
       });
 
       modeQuickBtn.addEventListener('click', ()=>{
@@ -1519,7 +1548,7 @@
       saveBatchBtn.addEventListener('click', saveBatch);
       clearBatchBtn.addEventListener('click', ()=>{ batchRows.innerHTML=''; });
 
-      clearMonthBtn.addEventListener('click', ()=>{
+      clearMonthBtn.addEventListener('click', async ()=>{
         const msg = "Are you sure you want to delete this month's expenses? You won't be able to get them back.";
         if(confirm(msg)){
           const m = monthEl.value;
@@ -1530,7 +1559,7 @@
           const url = URL.createObjectURL(blob);
           const a = document.createElement('a'); a.href=url; a.download=`family-accounts-backup-${safeName(monthLabel)}.json`;
           document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-          data.expenses = []; save(); renderAll();
+          data.expenses = []; await save(); renderAll();
         }
       });
 
