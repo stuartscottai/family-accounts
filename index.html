@@ -590,7 +590,6 @@
 
     // Averages
     const avgYearSelect = document.getElementById('avgYearSelect');
-    const avgCatYearSelect = document.getElementById('avgCatYearSelect');
     const avgYTD = document.getElementById('avgYTD');
     const avgAll = document.getElementById('avgAll');
     const avgByYear = document.getElementById('avgByYear');
@@ -1242,16 +1241,14 @@
       if(!years.includes(selectedYear)){
         selectedYear = years[0];
       }
-      [avgYearSelect, avgCatYearSelect].forEach(sel=>{
-        if(!sel) return;
-        sel.innerHTML='';
-        years.forEach(yr=>{
-          const o=document.createElement('option');
-          o.value=yr; o.textContent=yr;
-          sel.appendChild(o);
-        });
-        sel.value = selectedYear;
+      if(!avgYearSelect) return;
+      avgYearSelect.innerHTML='';
+      years.forEach(yr=>{
+        const o=document.createElement('option');
+        o.value=yr; o.textContent=yr;
+        avgYearSelect.appendChild(o);
       });
+      avgYearSelect.value = selectedYear;
     }
     function computeAverages(yearForYtd){
       const activeYear = String(yearForYtd || new Date().getFullYear());
@@ -1699,12 +1696,6 @@
 
       avgYearSelect.addEventListener('change', ()=>{
         selectedYear = avgYearSelect.value;
-        avgCatYearSelect.value = selectedYear;
-        renderAverages();
-      });
-      avgCatYearSelect.addEventListener('change', ()=>{
-        selectedYear = avgCatYearSelect.value;
-        avgYearSelect.value = selectedYear;
         renderAverages();
       });
 
