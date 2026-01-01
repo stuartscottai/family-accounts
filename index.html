@@ -642,6 +642,11 @@
     function defaultData(){
       return {expenses:[], lastEdited: new Date().toISOString()};
     }
+    function ensureMonthsContainer(){
+      if(!fileData.months || typeof fileData.months !== 'object'){
+        fileData.months = {};
+      }
+    }
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
     function debounceSave(){ clearTimeout(saveDebounce); saveDebounce = setTimeout(()=>persist(), 400); }
@@ -843,6 +848,7 @@
 
     async function loadFromFileOrLocal(month){
       if(currentUser){
+        ensureMonthsContainer();
         data = fileData.months[month];
         if(!data){
           const localRaw = localStorage.getItem(keyFor(month));
@@ -869,6 +875,7 @@
     async function persist(){
       try{ localSaveCurrent(); }catch{}
       if(currentUser){
+        ensureMonthsContainer();
         fileData.months[monthEl.value] = data;
         try{
           await saveRemote();
@@ -1211,6 +1218,7 @@
         // Ensure people and categories arrays exist
         if(!fileData.people) fileData.people = [];
         if(!fileData.categories) fileData.categories = [];
+        ensureMonthsContainer();
 
         // If Supabase data is missing people/categories, migrate from existing months
         if(fileData.people.length === 0 && fileData.categories.length === 0){
@@ -1444,15 +1452,26 @@
       const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
       const rows=[...batchRows.querySelectorAll('.row')]; if(!rows.length){ alert('Add at least one line'); return; }
       const splits = getSplitsFromSliders(batchSplitSliders);
-      let added=0;
+      const previousExpenses = [...(data?.expenses||[])];
+      const newEntries = [];
       for(const r of rows){
         const cat=r.querySelector('.batchCategory').value;
         const val=parseFloat(r.querySelector('.batchAmount').value);
         const note=(r.querySelector('.batchNote')?.value||'').trim();
-        if(cat && isFinite(val) && val>0){ (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits}); added++; }
+        if(cat && isFinite(val) && val>0){ newEntries.push({payer, category:cat, amount: round2(val), note, splits}); }
       }
-      if(!added){ alert('Please enter valid amounts'); return; }
-      batchRows.innerHTML=''; await save(); renderAll();
+      if(!newEntries.length){ alert('Please enter valid amounts'); return; }
+      try{
+        data.expenses = previousExpenses.concat(newEntries);
+        ensureMonthsContainer();
+        await save();
+        renderAll();
+        batchRows.innerHTML='';
+      }catch(err){
+        console.error('Failed to save batch expenses', err);
+        data.expenses = previousExpenses;
+        alert('Saving the batch failed. Your lines are kept so you can try again.');
+      }
     }
 
     // ---------- Init & events ----------
