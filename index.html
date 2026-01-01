@@ -293,14 +293,6 @@
 <link rel="icon" href="/family-accounts/favicon-48.png" sizes="48x48" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-<script>
-  if ("serviceWorker" in navigator) {
-    window.addEventListener("load", () => {
-      navigator.serviceWorker.register("/family-accounts/service-worker.js")
-        .catch(err => console.error("SW registration failed:", err));
-    });
-  }
-</script>
 </head>
 <body>
   <div class="wrap">
