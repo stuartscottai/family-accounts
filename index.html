@@ -1285,7 +1285,10 @@
     function save(){ setLastEditedNow(); persist(); }
     function addPerson(name){
       name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
-      (fileData.people = fileData.people||[]).push(name); saveGlobalToLocal(); renderPeopleCats();
+      (fileData.people = fileData.people||[]).push(name);
+      saveGlobalToLocal();
+      if(currentUser){ saveRemote().catch(err => console.error('Failed to sync person to cloud:', err)); }
+      renderPeopleCats();
     }
     function removePerson(name){
       // Remove from global list
@@ -1302,6 +1305,7 @@
             fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
           }
         }
+        saveRemote().catch(err => console.error('Failed to sync person removal to cloud:', err));
       } else {
         // If using local storage, clean up all saved months
         for(const month of listSavedMonthsLocal()){
@@ -1322,7 +1326,10 @@
     }
     function addCategory(name){
       name = (name||'').trim(); if(!name) return; if((fileData.categories||[]).includes(name)) return;
-      (fileData.categories = fileData.categories||[]).push(name); saveGlobalToLocal(); renderPeopleCats();
+      (fileData.categories = fileData.categories||[]).push(name);
+      saveGlobalToLocal();
+      if(currentUser){ saveRemote().catch(err => console.error('Failed to sync category to cloud:', err)); }
+      renderPeopleCats();
     }
     function removeCategory(name){
       // Remove from global list
@@ -1339,6 +1346,7 @@
             fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
           }
         }
+        saveRemote().catch(err => console.error('Failed to sync category removal to cloud:', err));
       } else {
         // If using local storage, clean up all saved months
         for(const month of listSavedMonthsLocal()){
