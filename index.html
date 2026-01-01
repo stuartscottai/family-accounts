@@ -592,7 +592,9 @@
 
     // ---------- App state ----------
     let data = null; // current month data (only expenses and lastEdited)
-    let fileData = { people: [], categories: [], months: {} }; // Global people/categories + months
+    let fileData = { people: [], categories: [] }; // Global people/categories (months cached separately)
+    let remoteMonths = []; // list of month keys in Supabase
+    let remoteMonthCache = {}; // month -> data cache from Supabase
     let saveDebounce = null;
     let lastLoadedMonth = null;
     let supabaseClient = null;
@@ -653,9 +655,8 @@
       return Number.isFinite(t) ? t : -Infinity;
     }
     function ensureMonthsContainer(){
-      if(!fileData.months || typeof fileData.months !== 'object'){
-        fileData.months = {};
-      }
+      // kept for backward compatibility (no-op now that months live in separate table)
+      if(!remoteMonthCache || typeof remoteMonthCache !== 'object'){ remoteMonthCache = {}; }
     }
     async function ensureFreshSession(){
       if(!supabaseClient) return false;
@@ -859,33 +860,49 @@
       return months;
     }
 
-    function listSavedMonthsRemote(){ return Object.keys(fileData.months||{}).sort((a,b)=> a<b?1:(a>b?-1:0)); }
+    function listSavedMonthsRemote(){ return (remoteMonths||[]).slice().sort((a,b)=> a<b?1:(a>b?-1:0)); }
 
     // ---------- Shared load/save ----------
     function monthExists(month){
-      if(currentUser) return !!(fileData.months && fileData.months[month]);
+      if(currentUser) return (remoteMonths||[]).includes(month);
       return localStorage.getItem(keyFor(month)) != null;
     }
 
     async function loadFromFileOrLocal(month){
       if(currentUser){
         ensureMonthsContainer();
-        data = fileData.months[month];
-        if(!data){
-          const localRaw = localStorage.getItem(keyFor(month));
-          if(localRaw){
-            try{
-              const parsed = JSON.parse(localRaw);
-              // Only keep expenses and lastEdited
-              data = {
-                expenses: parsed.expenses || [],
-                lastEdited: parsed.lastEdited || new Date().toISOString()
-              };
-            }catch{
+        if(remoteMonthCache[month]){
+          data = remoteMonthCache[month];
+        }else{
+          // try load from Supabase
+          const { data: row, error } = await supabaseClient
+            .from('family_account_months')
+            .select('data')
+            .eq('user_id', currentUser.id)
+            .eq('month', month)
+            .single();
+          if(error && error.code !== 'PGRST116'){ // not found
+            console.error('Failed to load month from Supabase', error);
+          }
+          if(row && row.data){
+            data = row.data;
+            remoteMonthCache[month] = data;
+            if(!remoteMonths.includes(month)) remoteMonths.push(month);
+          }else{
+            const localRaw = localStorage.getItem(keyFor(month));
+            if(localRaw){
+              try{
+                const parsed = JSON.parse(localRaw);
+                data = {
+                  expenses: parsed.expenses || [],
+                  lastEdited: parsed.lastEdited || new Date().toISOString()
+                };
+              }catch{
+                data = defaultData();
+              }
+            } else {
               data = defaultData();
             }
-          } else {
-            data = defaultData();
           }
         }
       } else {
@@ -903,10 +920,9 @@
           alert('Your Supabase session expired. The entries were kept locally — please sign in again to sync.');
         }
         ensureMonthsContainer();
-        fileData.months[monthEl.value] = data;
         if(stillAuthed){
           try{
-            await withTimeout(saveRemote(), 15000, 'Cloud sync');
+            await withTimeout(saveRemoteMonth(monthEl.value, data), 15000, 'Cloud sync');
           }catch(err){
             cloudOk = false;
             console.error('Failed to sync to cloud:', err);
@@ -1189,7 +1205,7 @@
     // Averages across months (from local or file)
     function listSavedMonths(){ return currentUser ? listSavedMonthsRemote() : listSavedMonthsLocal(); }
     function getMonthData(m){
-      if(currentUser) return fileData.months[m] || defaultData(null);
+      if(currentUser) return remoteMonthCache[m] || defaultData(null);
       const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
       try{ return JSON.parse(raw); }catch{return defaultData(null);} }
     function computeAverages(){
@@ -1235,93 +1251,70 @@
 
     async function loadRemote(){
       if(!supabaseClient || !currentUser) return;
-      const { data: rows, error } = await supabaseClient
+      // Load global people/categories
+      const { data: globals, error: globalsError } = await supabaseClient
         .from('family_account_data')
         .select('data')
         .eq('user_id', currentUser.id)
-        .limit(1);
-      if(error){
-        console.error(error);
+        .single();
+      if(globalsError && globalsError.code !== 'PGRST116'){
+        console.error('Failed to load globals from Supabase', globalsError);
         return;
       }
-      if(rows && rows.length){
-        fileData = rows[0].data || { people: [], categories: [], months: {} };
-        // Ensure people and categories arrays exist
-        if(!fileData.people) fileData.people = [];
-        if(!fileData.categories) fileData.categories = [];
-        ensureMonthsContainer();
-        let mergedLocal = false;
-
-        // If we have fresher local backups for any month (e.g., cloud save failed), prefer them
-        try{
-          for(const m of listSavedMonthsLocal()){
-            const raw = localStorage.getItem(keyFor(m));
-            if(!raw) continue;
-            const local = JSON.parse(raw);
-            const remote = fileData.months[m];
-            if(editedMs(local) > editedMs(remote)){
-              fileData.months[m] = {
-                expenses: local.expenses || [],
-                lastEdited: local.lastEdited || new Date().toISOString()
-              };
-              mergedLocal = true;
-            }
-          }
-        }catch(err){
-          console.error('Failed to reconcile Supabase with local backups', err);
-        }
-        if(mergedLocal){
-          try{ await saveRemote(); }
-          catch(err){ console.error('Failed to push fresher local data to Supabase', err); }
-        }
-
-        // If Supabase data is missing people/categories, migrate from existing months
-        if(fileData.people.length === 0 && fileData.categories.length === 0){
-          console.log('Supabase data missing people/categories - extracting from existing months...');
-          const allPeople = new Set();
-          const allCategories = new Set();
-
-          // Scan all months in Supabase data for people/categories
-          if(fileData.months && typeof fileData.months === 'object'){
-            for(const [month, monthData] of Object.entries(fileData.months)){
-              if(monthData && typeof monthData === 'object'){
-                if(monthData.people && Array.isArray(monthData.people)){
-                  monthData.people.forEach(p => allPeople.add(String(p).trim()));
-                }
-                if(monthData.categories && Array.isArray(monthData.categories)){
-                  monthData.categories.forEach(c => allCategories.add(String(c).trim()));
-                }
-              }
-            }
-          }
-
-          if(allPeople.size > 0 || allCategories.size > 0){
-            fileData.people = Array.from(allPeople).filter(Boolean);
-            fileData.categories = Array.from(allCategories).filter(Boolean);
-            console.log('Migrated from Supabase months:', fileData.people.length, 'people and', fileData.categories.length, 'categories');
-            // Save updated structure back to Supabase
-            await saveRemote();
-          }
-        }
+      if(globals && globals.data){
+        fileData = globals.data || { people: [], categories: [] };
       } else {
-        fileData = { people: [], categories: [], months: {} };
-        await saveRemote();
+        fileData = { people: [], categories: [] };
+        await saveRemoteGlobals(); // initialize row
+      }
+      if(!fileData.people) fileData.people = [];
+      if(!fileData.categories) fileData.categories = [];
+
+      // Load all months (separate rows) for caching + averages
+      const { data: monthsData, error: monthsError } = await supabaseClient
+        .from('family_account_months')
+        .select('month,data')
+        .eq('user_id', currentUser.id);
+      if(monthsError){
+        console.error('Failed to load months from Supabase', monthsError);
+        remoteMonths = [];
+        remoteMonthCache = {};
+      } else {
+        remoteMonths = (monthsData||[]).map(r=>r.month);
+        remoteMonthCache = {};
+        (monthsData||[]).forEach(r=>{
+          if(r && r.month && r.data){ remoteMonthCache[r.month]=r.data; }
+        });
       }
     }
 
-    async function saveRemote(){
+    async function saveRemoteGlobals(){
       if(!supabaseClient || !currentUser) return;
-      // Capture fileData snapshot immediately to prevent corruption if fileData is reset during save
-      const dataSnapshot = JSON.parse(JSON.stringify(fileData));
       const payload = {
         user_id: currentUser.id,
-        data: dataSnapshot,
+        data: { people: fileData.people||[], categories: fileData.categories||[] },
         updated_at: new Date().toISOString()
       };
       const { error } = await supabaseClient
         .from('family_account_data')
         .upsert(payload, { onConflict: 'user_id' });
       if(error) throw error;
+    }
+
+    async function saveRemoteMonth(month, monthData){
+      if(!supabaseClient || !currentUser) return;
+      const payload = {
+        user_id: currentUser.id,
+        month,
+        data: monthData,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabaseClient
+        .from('family_account_months')
+        .upsert(payload, { onConflict: 'user_id,month' });
+      if(error) throw error;
+      remoteMonthCache[month] = monthData;
+      if(!remoteMonths.includes(month)) remoteMonths.push(month);
     }
 
     async function refreshSession(){
@@ -1373,7 +1366,7 @@
       saveGlobalToLocal();
       if(currentUser){
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync person to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1390,14 +1383,17 @@
       data.expenses = (data.expenses||[]).filter(e=>e.payer!==name && e.person!==name);
 
       // If using Supabase, remove from all months
-      if(currentUser && fileData.months){
-        for(const month in fileData.months){
-          if(fileData.months[month] && fileData.months[month].expenses){
-            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
+      if(currentUser){
+        // remove from cached remote months and push updates
+        const monthKeys = Object.keys(remoteMonthCache||{});
+        for(const m of monthKeys){
+          if(remoteMonthCache[m] && remoteMonthCache[m].expenses){
+            remoteMonthCache[m].expenses = remoteMonthCache[m].expenses.filter(e=>e.payer!==name && e.person!==name);
+            try{ await saveRemoteMonth(m, remoteMonthCache[m]); }catch(err){ console.error('Failed to sync person removal for month', m, err); }
           }
         }
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync person removal to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1426,7 +1422,7 @@
       saveGlobalToLocal();
       if(currentUser){
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync category to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1443,14 +1439,17 @@
       data.expenses = (data.expenses||[]).filter(e=>e.category!==name);
 
       // If using Supabase, remove from all months
-      if(currentUser && fileData.months){
-        for(const month in fileData.months){
-          if(fileData.months[month] && fileData.months[month].expenses){
-            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
+      if(currentUser){
+        // remove from cached remote months and push updates
+        const monthKeys = Object.keys(remoteMonthCache||{});
+        for(const m of monthKeys){
+          if(remoteMonthCache[m] && remoteMonthCache[m].expenses){
+            remoteMonthCache[m].expenses = remoteMonthCache[m].expenses.filter(e=>e.category!==name);
+            try{ await saveRemoteMonth(m, remoteMonthCache[m]); }catch(err){ console.error('Failed to sync category removal for month', m, err); }
           }
         }
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync category removal to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
