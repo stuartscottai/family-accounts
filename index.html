@@ -94,6 +94,14 @@
       font-size:13px;color:var(--text);font-weight:500;
       display:block;margin-bottom:4px;
     }
+    .label-select{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .label-select select{min-width:120px}
 
     /* Clean Inputs */
     input[type="text"],input[type="email"],input[type="password"],input[type="number"],select,textarea,input[type="month"]{
@@ -504,7 +512,10 @@
         <div class="card-content">
           <div class="row">
             <div class="col">
-              <label>Average monthly spend — YTD</label>
+              <div class="label-select">
+                <label for="avgYearSelect">Average monthly spend — YTD</label>
+                <select id="avgYearSelect" style="max-width:140px"></select>
+              </div>
               <div id="avgYTD" class="big">€0.00</div>
             </div>
             <div class="col">
@@ -514,13 +525,10 @@
           </div>
           <div class="row" style="margin-top:10px">
             <div class="col" style="flex:1">
-              <div class="card-title" style="font-weight:700">Average monthly spend — by year</div>
-              <div id="avgByYear"></div>
-            </div>
-          </div>
-          <div class="row" style="margin-top:10px">
-            <div class="col" style="flex:1">
-              <div class="card-title" style="font-weight:700">Average by category — YTD</div>
+              <div class="label-select">
+                <div class="card-title" style="font-weight:700">Average by category — YTD</div>
+                <select id="avgCatYearSelect" style="max-width:140px"></select>
+              </div>
               <div id="avgCatYTD"></div>
             </div>
             <div class="col" style="flex:1">
@@ -581,6 +589,8 @@
     const clearMonthBtn = document.getElementById('clearMonthBtn');
 
     // Averages
+    const avgYearSelect = document.getElementById('avgYearSelect');
+    const avgCatYearSelect = document.getElementById('avgCatYearSelect');
     const avgYTD = document.getElementById('avgYTD');
     const avgAll = document.getElementById('avgAll');
     const avgByYear = document.getElementById('avgByYear');
@@ -606,6 +616,7 @@
     let lastLoadedMonth = null;
     let supabaseClient = null;
     let currentUser = null;
+    let selectedYear = String(new Date().getFullYear());
 
     // ---------- Supabase config ----------
     //
@@ -861,7 +872,12 @@
       const months = [];
       for(let i=0;i<localStorage.length;i++){
         const k = localStorage.key(i);
-        if(k && k.startsWith('famacct:')) months.push(k.split(':')[1]);
+        if(k && k.startsWith('famacct:')){
+          const m = k.split(':')[1];
+          if(/^[0-9]{4}-[0-9]{2}$/.test(m)){
+            months.push(m);
+          }
+        }
       }
       months.sort((a,b)=> a<b?1:(a>b?-1:0));
       return months;
@@ -1215,11 +1231,33 @@
       if(currentUser) return remoteMonthCache[m] || defaultData(null);
       const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
       try{ return JSON.parse(raw); }catch{return defaultData(null);} }
-    function computeAverages(){
+    function getAvailableYears(){
+      const months = listSavedMonths();
+      const years = new Set(months.map(m=>m.split('-')[0]));
+      if(!years.size) years.add(String(new Date().getFullYear()));
+      return Array.from(years).sort((a,b)=> b.localeCompare(a));
+    }
+    function syncYearSelectors(){
+      const years = getAvailableYears();
+      if(!years.includes(selectedYear)){
+        selectedYear = years[0];
+      }
+      [avgYearSelect, avgCatYearSelect].forEach(sel=>{
+        if(!sel) return;
+        sel.innerHTML='';
+        years.forEach(yr=>{
+          const o=document.createElement('option');
+          o.value=yr; o.textContent=yr;
+          sel.appendChild(o);
+        });
+        sel.value = selectedYear;
+      });
+    }
+    function computeAverages(yearForYtd){
+      const activeYear = String(yearForYtd || new Date().getFullYear());
       const months = listSavedMonths();
       const allData = months.map(m=>({m, d:getMonthData(m)})).filter(x=>x.d);
-      const year = new Date().getFullYear();
-      const ytd = allData.filter(x => x.m.startsWith(year + '-'));
+      const ytd = allData.filter(x => x.m.startsWith(activeYear + '-'));
       const allMonthsCount = allData.length, ytdMonthsCount = ytd.length;
       const sumTotal = (arr)=> arr.reduce((s,x)=> s + (x.d.expenses||[]).reduce((a,e)=>a+(+e.amount||0),0), 0);
       const totalAll = sumTotal(allData), totalYTD = sumTotal(ytd);
@@ -1253,20 +1291,12 @@
       html += '</tbody></table>'; return html;
     }
     function renderAverages(){
-      const {avgAllVal, avgYTDVal, avgPerYear, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount} = computeAverages();
+      syncYearSelectors();
+      const {avgAllVal, avgYTDVal, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount} = computeAverages(selectedYear);
       avgAll.textContent = euro(avgAllVal) + (allMonthsCount?(' ('+allMonthsCount+' mo.)'):'');
-      avgYTD.textContent = euro(avgYTDVal) + (ytdMonthsCount?(' ('+ytdMonthsCount+' mo. YTD)'):'');
-      const years = Object.keys(avgPerYear).sort((a,b)=> b.localeCompare(a));
-      if(years.length){
-        let html = '<table><thead><tr><th>Year</th><th>Avg / month</th></tr></thead><tbody>';
-        years.forEach(y=>{ html += `<tr><td>${y}</td><td>${euro(avgPerYear[y])}</td></tr>`; });
-        html += '</tbody></table>';
-        avgByYear.innerHTML = html;
-      } else {
-        avgByYear.innerHTML = '<div class="muted">No data yet.</div>';
-      }
+      avgYTD.textContent = euro(avgYTDVal) + (ytdMonthsCount?(` (${ytdMonthsCount} mo. ${selectedYear})`):'');
       avgCatAll.innerHTML = tableFromMap(avgCatAllMap, 'Category', 'Avg / month (All)');
-      avgCatYTD.innerHTML = tableFromMap(avgCatYTDMap, 'Category', 'Avg / month (YTD)');
+      avgCatYTD.innerHTML = tableFromMap(avgCatYTDMap, 'Category', `Avg / month (${selectedYear})`);
     }
 
     // ---------- Supabase ----------
@@ -1664,6 +1694,18 @@
         await switchMonthSafely(target);
         buildSplitSliders(quickSplitSliders);
         buildSplitSliders(batchSplitSliders);
+        renderAverages();
+      });
+
+      avgYearSelect.addEventListener('change', ()=>{
+        selectedYear = avgYearSelect.value;
+        avgCatYearSelect.value = selectedYear;
+        renderAverages();
+      });
+      avgCatYearSelect.addEventListener('change', ()=>{
+        selectedYear = avgCatYearSelect.value;
+        avgYearSelect.value = selectedYear;
+        renderAverages();
       });
 
       addPersonBtn.addEventListener('click', async ()=>{
