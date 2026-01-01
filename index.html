@@ -1141,8 +1141,8 @@
       const avgAllVal = allMonthsCount ? round2(totalAll / allMonthsCount) : 0;
       const avgYTDVal = ytdMonthsCount ? round2(totalYTD / ytdMonthsCount) : 0;
       const catsAllTotals = {}, catsYtdTotals = {}; const catSetAll = new Set(), catSetYTD = new Set();
-      allData.forEach(({d})=>{ (d.categories||[]).forEach(c=>catSetAll.add(c)); (d.expenses||[]).forEach(e=>{ catsAllTotals[e.category]=(catsAllTotals[e.category]||0)+(+e.amount||0); }); });
-      ytd.forEach(({d})=>{ (d.categories||[]).forEach(c=>catSetYTD.add(c)); (d.expenses||[]).forEach(e=>{ catsYtdTotals[e.category]=(catsYtdTotals[e.category]||0)+(+e.amount||0); }); });
+      allData.forEach(({d})=>{ (d.expenses||[]).forEach(e=>{ if(e.category) catSetAll.add(e.category); catsAllTotals[e.category]=(catsAllTotals[e.category]||0)+(+e.amount||0); }); });
+      ytd.forEach(({d})=>{ (d.expenses||[]).forEach(e=>{ if(e.category) catSetYTD.add(e.category); catsYtdTotals[e.category]=(catsYtdTotals[e.category]||0)+(+e.amount||0); }); });
       const avgCatAllMap = {}, avgCatYTDMap = {};
       for(const c of catSetAll){ avgCatAllMap[c] = allMonthsCount ? round2((catsAllTotals[c]||0)/allMonthsCount) : 0; }
       for(const c of catSetYTD){ avgCatYTDMap[c] = ytdMonthsCount ? round2((catsYtdTotals[c]||0)/ytdMonthsCount) : 0; }
