@@ -642,6 +642,26 @@
     function defaultData(){
       return {expenses:[], lastEdited: new Date().toISOString()};
     }
+    function editedMs(obj){
+      const t = Date.parse(obj?.lastEdited);
+      return Number.isFinite(t) ? t : -Infinity;
+    }
+    function ensureMonthsContainer(){
+      if(!fileData.months || typeof fileData.months !== 'object'){
+        fileData.months = {};
+      }
+    }
+    async function ensureFreshSession(){
+      if(!supabaseClient) return false;
+      const { data: sessionData, error } = await supabaseClient.auth.getSession();
+      if(error){
+        console.error('Failed to refresh Supabase session', error);
+        return false;
+      }
+      currentUser = sessionData?.session?.user || null;
+      setModeBadge();
+      return !!currentUser;
+    }
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
     function debounceSave(){ clearTimeout(saveDebounce); saveDebounce = setTimeout(()=>persist(), 400); }
@@ -843,6 +863,7 @@
 
     async function loadFromFileOrLocal(month){
       if(currentUser){
+        ensureMonthsContainer();
         data = fileData.months[month];
         if(!data){
           const localRaw = localStorage.getItem(keyFor(month));
@@ -867,19 +888,30 @@
     }
 
     async function persist(){
+      let cloudOk = true;
       try{ localSaveCurrent(); }catch{}
       if(currentUser){
+        const stillAuthed = await ensureFreshSession();
+        if(!stillAuthed){
+          cloudOk = false;
+          alert('Your Supabase session expired. The entries were kept locally — please sign in again to sync.');
+        }
+        ensureMonthsContainer();
         fileData.months[monthEl.value] = data;
-        try{
-          await saveRemote();
-        }catch(err){
-          console.error('Failed to sync to cloud:', err);
-          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        if(stillAuthed){
+          try{
+            await saveRemote();
+          }catch(err){
+            cloudOk = false;
+            console.error('Failed to sync to cloud:', err);
+            alert('Warning: Failed to sync to cloud. Please check your connection.');
+          }
         }
       } else {
         saveGlobalToLocal();
       }
       renderAverages();
+      return cloudOk;
     }
 
     // ---------- Helpers ----------
@@ -1211,6 +1243,31 @@
         // Ensure people and categories arrays exist
         if(!fileData.people) fileData.people = [];
         if(!fileData.categories) fileData.categories = [];
+        ensureMonthsContainer();
+        let mergedLocal = false;
+
+        // If we have fresher local backups for any month (e.g., cloud save failed), prefer them
+        try{
+          for(const m of listSavedMonthsLocal()){
+            const raw = localStorage.getItem(keyFor(m));
+            if(!raw) continue;
+            const local = JSON.parse(raw);
+            const remote = fileData.months[m];
+            if(editedMs(local) > editedMs(remote)){
+              fileData.months[m] = {
+                expenses: local.expenses || [],
+                lastEdited: local.lastEdited || new Date().toISOString()
+              };
+              mergedLocal = true;
+            }
+          }
+        }catch(err){
+          console.error('Failed to reconcile Supabase with local backups', err);
+        }
+        if(mergedLocal){
+          try{ await saveRemote(); }
+          catch(err){ console.error('Failed to push fresher local data to Supabase', err); }
+        }
 
         // If Supabase data is missing people/categories, migrate from existing months
         if(fileData.people.length === 0 && fileData.categories.length === 0){
@@ -1303,7 +1360,7 @@
     function setMonthToNow(){ monthEl.value = thisMonthValue(); }
     function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
 
-    async function save(){ setLastEditedNow(); await persist(); }
+    async function save(){ setLastEditedNow(); return await persist(); }
     async function addPerson(name){
       name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
       (fileData.people = fileData.people||[]).push(name);
@@ -1444,15 +1501,28 @@
       const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
       const rows=[...batchRows.querySelectorAll('.row')]; if(!rows.length){ alert('Add at least one line'); return; }
       const splits = getSplitsFromSliders(batchSplitSliders);
-      let added=0;
+      const newEntries = [];
       for(const r of rows){
         const cat=r.querySelector('.batchCategory').value;
         const val=parseFloat(r.querySelector('.batchAmount').value);
         const note=(r.querySelector('.batchNote')?.value||'').trim();
-        if(cat && isFinite(val) && val>0){ (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits}); added++; }
+        if(cat && isFinite(val) && val>0){ newEntries.push({payer, category:cat, amount: round2(val), note, splits}); }
       }
-      if(!added){ alert('Please enter valid amounts'); return; }
-      batchRows.innerHTML=''; await save(); renderAll();
+      if(!newEntries.length){ alert('Please enter valid amounts'); return; }
+      try{
+        data.expenses = (data.expenses||[]).concat(newEntries);
+        ensureMonthsContainer();
+        const cloudOk = await save();
+        renderAll();
+        if(cloudOk){
+          batchRows.innerHTML='';
+        } else {
+          alert('Saved locally but could not sync to the cloud. The lines are kept so you can retry.');
+        }
+      }catch(err){
+        console.error('Failed to save batch expenses', err);
+        alert('Saving the batch failed. Your lines are kept so you can try again.');
+      }
     }
 
     // ---------- Init & events ----------
