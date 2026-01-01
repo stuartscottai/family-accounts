@@ -94,6 +94,14 @@
       font-size:13px;color:var(--text);font-weight:500;
       display:block;margin-bottom:4px;
     }
+    .label-select{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      flex-wrap:wrap;
+    }
+    .label-select select{min-width:120px}
 
     /* Clean Inputs */
     input[type="text"],input[type="email"],input[type="password"],input[type="number"],select,textarea,input[type="month"]{
@@ -504,7 +512,10 @@
         <div class="card-content">
           <div class="row">
             <div class="col">
-              <label>Average monthly spend — YTD</label>
+              <div class="label-select">
+                <label for="avgYearSelect">Average monthly spend — YTD</label>
+                <select id="avgYearSelect" style="max-width:140px"></select>
+              </div>
               <div id="avgYTD" class="big">€0.00</div>
             </div>
             <div class="col">
@@ -575,6 +586,7 @@
     const clearMonthBtn = document.getElementById('clearMonthBtn');
 
     // Averages
+    const avgYearSelect = document.getElementById('avgYearSelect');
     const avgYTD = document.getElementById('avgYTD');
     const avgAll = document.getElementById('avgAll');
     const avgCatYTD = document.getElementById('avgCatYTD');
@@ -592,11 +604,14 @@
 
     // ---------- App state ----------
     let data = null; // current month data (only expenses and lastEdited)
-    let fileData = { people: [], categories: [], months: {} }; // Global people/categories + months
+    let fileData = { people: [], categories: [] }; // Global people/categories (months cached separately)
+    let remoteMonths = []; // list of month keys in Supabase
+    let remoteMonthCache = {}; // month -> data cache from Supabase
     let saveDebounce = null;
     let lastLoadedMonth = null;
     let supabaseClient = null;
     let currentUser = null;
+    let selectedYear = String(new Date().getFullYear());
 
     // ---------- Supabase config ----------
     //
@@ -641,6 +656,31 @@
     function keyFor(month){ return `famacct:${month}` }
     function defaultData(){
       return {expenses:[], lastEdited: new Date().toISOString()};
+    }
+    function withTimeout(promise, ms, label='operation'){
+      return Promise.race([
+        promise,
+        new Promise((_, rej)=> setTimeout(()=>rej(new Error(label+' timed out')), ms))
+      ]);
+    }
+    function editedMs(obj){
+      const t = Date.parse(obj?.lastEdited);
+      return Number.isFinite(t) ? t : -Infinity;
+    }
+    function ensureMonthsContainer(){
+      // kept for backward compatibility (no-op now that months live in separate table)
+      if(!remoteMonthCache || typeof remoteMonthCache !== 'object'){ remoteMonthCache = {}; }
+    }
+    async function ensureFreshSession(){
+      if(!supabaseClient) return false;
+      const { data: sessionData, error } = await supabaseClient.auth.getSession();
+      if(error){
+        console.error('Failed to refresh Supabase session', error);
+        return false;
+      }
+      currentUser = sessionData?.session?.user || null;
+      setModeBadge();
+      return !!currentUser;
     }
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
@@ -827,38 +867,60 @@
       const months = [];
       for(let i=0;i<localStorage.length;i++){
         const k = localStorage.key(i);
-        if(k && k.startsWith('famacct:')) months.push(k.split(':')[1]);
+        if(k && k.startsWith('famacct:')){
+          const m = k.split(':')[1];
+          if(/^[0-9]{4}-[0-9]{2}$/.test(m)){
+            months.push(m);
+          }
+        }
       }
       months.sort((a,b)=> a<b?1:(a>b?-1:0));
       return months;
     }
 
-    function listSavedMonthsRemote(){ return Object.keys(fileData.months||{}).sort((a,b)=> a<b?1:(a>b?-1:0)); }
+    function listSavedMonthsRemote(){ return (remoteMonths||[]).slice().sort((a,b)=> a<b?1:(a>b?-1:0)); }
 
     // ---------- Shared load/save ----------
     function monthExists(month){
-      if(currentUser) return !!(fileData.months && fileData.months[month]);
+      if(currentUser) return (remoteMonths||[]).includes(month);
       return localStorage.getItem(keyFor(month)) != null;
     }
 
     async function loadFromFileOrLocal(month){
       if(currentUser){
-        data = fileData.months[month];
-        if(!data){
-          const localRaw = localStorage.getItem(keyFor(month));
-          if(localRaw){
-            try{
-              const parsed = JSON.parse(localRaw);
-              // Only keep expenses and lastEdited
-              data = {
-                expenses: parsed.expenses || [],
-                lastEdited: parsed.lastEdited || new Date().toISOString()
-              };
-            }catch{
+        ensureMonthsContainer();
+        if(remoteMonthCache[month]){
+          data = remoteMonthCache[month];
+        }else{
+          // try load from Supabase
+          const { data: row, error } = await supabaseClient
+            .from('family_account_months')
+            .select('data')
+            .eq('user_id', currentUser.id)
+            .eq('month', month)
+            .single();
+          if(error && error.code !== 'PGRST116'){ // not found
+            console.error('Failed to load month from Supabase', error);
+          }
+          if(row && row.data){
+            data = row.data;
+            remoteMonthCache[month] = data;
+            if(!remoteMonths.includes(month)) remoteMonths.push(month);
+          }else{
+            const localRaw = localStorage.getItem(keyFor(month));
+            if(localRaw){
+              try{
+                const parsed = JSON.parse(localRaw);
+                data = {
+                  expenses: parsed.expenses || [],
+                  lastEdited: parsed.lastEdited || new Date().toISOString()
+                };
+              }catch{
+                data = defaultData();
+              }
+            } else {
               data = defaultData();
             }
-          } else {
-            data = defaultData();
           }
         }
       } else {
@@ -867,19 +929,29 @@
     }
 
     async function persist(){
+      let cloudOk = true;
       try{ localSaveCurrent(); }catch{}
       if(currentUser){
-        fileData.months[monthEl.value] = data;
-        try{
-          await saveRemote();
-        }catch(err){
-          console.error('Failed to sync to cloud:', err);
-          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        const stillAuthed = await ensureFreshSession();
+        if(!stillAuthed){
+          cloudOk = false;
+          alert('Your Supabase session expired. The entries were kept locally — please sign in again to sync.');
+        }
+        ensureMonthsContainer();
+        if(stillAuthed){
+          try{
+            await withTimeout(saveRemoteMonth(monthEl.value, data), 15000, 'Cloud sync');
+          }catch(err){
+            cloudOk = false;
+            console.error('Failed to sync to cloud:', err);
+            alert('Warning: Failed to sync to cloud. Please check your connection.');
+          }
         }
       } else {
         saveGlobalToLocal();
       }
       renderAverages();
+      return cloudOk;
     }
 
     // ---------- Helpers ----------
@@ -1151,14 +1223,34 @@
     // Averages across months (from local or file)
     function listSavedMonths(){ return currentUser ? listSavedMonthsRemote() : listSavedMonthsLocal(); }
     function getMonthData(m){
-      if(currentUser) return fileData.months[m] || defaultData(null);
+      if(currentUser) return remoteMonthCache[m] || defaultData(null);
       const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
       try{ return JSON.parse(raw); }catch{return defaultData(null);} }
-    function computeAverages(){
+    function getAvailableYears(){
+      const months = listSavedMonths();
+      const years = new Set(months.map(m=>m.split('-')[0]));
+      if(!years.size) years.add(String(new Date().getFullYear()));
+      return Array.from(years).sort((a,b)=> b.localeCompare(a));
+    }
+    function syncYearSelectors(){
+      const years = getAvailableYears();
+      if(!years.includes(selectedYear)){
+        selectedYear = years[0];
+      }
+      if(!avgYearSelect) return;
+      avgYearSelect.innerHTML='';
+      years.forEach(yr=>{
+        const o=document.createElement('option');
+        o.value=yr; o.textContent=yr;
+        avgYearSelect.appendChild(o);
+      });
+      avgYearSelect.value = selectedYear;
+    }
+    function computeAverages(yearForYtd){
+      const activeYear = String(yearForYtd || new Date().getFullYear());
       const months = listSavedMonths();
       const allData = months.map(m=>({m, d:getMonthData(m)})).filter(x=>x.d);
-      const year = new Date().getFullYear();
-      const ytd = allData.filter(x => x.m.startsWith(year + '-'));
+      const ytd = allData.filter(x => x.m.startsWith(activeYear + '-'));
       const allMonthsCount = allData.length, ytdMonthsCount = ytd.length;
       const sumTotal = (arr)=> arr.reduce((s,x)=> s + (x.d.expenses||[]).reduce((a,e)=>a+(+e.amount||0),0), 0);
       const totalAll = sumTotal(allData), totalYTD = sumTotal(ytd);
@@ -1179,11 +1271,12 @@
       html += '</tbody></table>'; return html;
     }
     function renderAverages(){
-      const {avgAllVal, avgYTDVal, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount} = computeAverages();
+      syncYearSelectors();
+      const {avgAllVal, avgYTDVal, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount} = computeAverages(selectedYear);
       avgAll.textContent = euro(avgAllVal) + (allMonthsCount?(' ('+allMonthsCount+' mo.)'):'');
-      avgYTD.textContent = euro(avgYTDVal) + (ytdMonthsCount?(' ('+ytdMonthsCount+' mo. YTD)'):'');
+      avgYTD.textContent = euro(avgYTDVal) + (ytdMonthsCount?(` (${ytdMonthsCount} mo. ${selectedYear})`):'');
       avgCatAll.innerHTML = tableFromMap(avgCatAllMap, 'Category', 'Avg / month (All)');
-      avgCatYTD.innerHTML = tableFromMap(avgCatYTDMap, 'Category', 'Avg / month (YTD)');
+      avgCatYTD.innerHTML = tableFromMap(avgCatYTDMap, 'Category', `Avg / month (${selectedYear})`);
     }
 
     // ---------- Supabase ----------
@@ -1197,68 +1290,70 @@
 
     async function loadRemote(){
       if(!supabaseClient || !currentUser) return;
-      const { data: rows, error } = await supabaseClient
+      // Load global people/categories
+      const { data: globals, error: globalsError } = await supabaseClient
         .from('family_account_data')
         .select('data')
         .eq('user_id', currentUser.id)
-        .limit(1);
-      if(error){
-        console.error(error);
+        .single();
+      if(globalsError && globalsError.code !== 'PGRST116'){
+        console.error('Failed to load globals from Supabase', globalsError);
         return;
       }
-      if(rows && rows.length){
-        fileData = rows[0].data || { people: [], categories: [], months: {} };
-        // Ensure people and categories arrays exist
-        if(!fileData.people) fileData.people = [];
-        if(!fileData.categories) fileData.categories = [];
-
-        // If Supabase data is missing people/categories, migrate from existing months
-        if(fileData.people.length === 0 && fileData.categories.length === 0){
-          console.log('Supabase data missing people/categories - extracting from existing months...');
-          const allPeople = new Set();
-          const allCategories = new Set();
-
-          // Scan all months in Supabase data for people/categories
-          if(fileData.months && typeof fileData.months === 'object'){
-            for(const [month, monthData] of Object.entries(fileData.months)){
-              if(monthData && typeof monthData === 'object'){
-                if(monthData.people && Array.isArray(monthData.people)){
-                  monthData.people.forEach(p => allPeople.add(String(p).trim()));
-                }
-                if(monthData.categories && Array.isArray(monthData.categories)){
-                  monthData.categories.forEach(c => allCategories.add(String(c).trim()));
-                }
-              }
-            }
-          }
-
-          if(allPeople.size > 0 || allCategories.size > 0){
-            fileData.people = Array.from(allPeople).filter(Boolean);
-            fileData.categories = Array.from(allCategories).filter(Boolean);
-            console.log('Migrated from Supabase months:', fileData.people.length, 'people and', fileData.categories.length, 'categories');
-            // Save updated structure back to Supabase
-            await saveRemote();
-          }
-        }
+      if(globals && globals.data){
+        fileData = globals.data || { people: [], categories: [] };
       } else {
-        fileData = { people: [], categories: [], months: {} };
-        await saveRemote();
+        fileData = { people: [], categories: [] };
+        await saveRemoteGlobals(); // initialize row
+      }
+      if(!fileData.people) fileData.people = [];
+      if(!fileData.categories) fileData.categories = [];
+
+      // Load all months (separate rows) for caching + averages
+      const { data: monthsData, error: monthsError } = await supabaseClient
+        .from('family_account_months')
+        .select('month,data')
+        .eq('user_id', currentUser.id);
+      if(monthsError){
+        console.error('Failed to load months from Supabase', monthsError);
+        remoteMonths = [];
+        remoteMonthCache = {};
+      } else {
+        remoteMonths = (monthsData||[]).map(r=>r.month);
+        remoteMonthCache = {};
+        (monthsData||[]).forEach(r=>{
+          if(r && r.month && r.data){ remoteMonthCache[r.month]=r.data; }
+        });
       }
     }
 
-    async function saveRemote(){
+    async function saveRemoteGlobals(){
       if(!supabaseClient || !currentUser) return;
-      // Capture fileData snapshot immediately to prevent corruption if fileData is reset during save
-      const dataSnapshot = JSON.parse(JSON.stringify(fileData));
       const payload = {
         user_id: currentUser.id,
-        data: dataSnapshot,
+        data: { people: fileData.people||[], categories: fileData.categories||[] },
         updated_at: new Date().toISOString()
       };
       const { error } = await supabaseClient
         .from('family_account_data')
         .upsert(payload, { onConflict: 'user_id' });
       if(error) throw error;
+    }
+
+    async function saveRemoteMonth(month, monthData){
+      if(!supabaseClient || !currentUser) return;
+      const payload = {
+        user_id: currentUser.id,
+        month,
+        data: monthData,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabaseClient
+        .from('family_account_months')
+        .upsert(payload, { onConflict: 'user_id,month' });
+      if(error) throw error;
+      remoteMonthCache[month] = monthData;
+      if(!remoteMonths.includes(month)) remoteMonths.push(month);
     }
 
     async function refreshSession(){
@@ -1303,14 +1398,14 @@
     function setMonthToNow(){ monthEl.value = thisMonthValue(); }
     function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
 
-    async function save(){ setLastEditedNow(); await persist(); }
+    async function save(){ setLastEditedNow(); return await persist(); }
     async function addPerson(name){
       name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
       (fileData.people = fileData.people||[]).push(name);
       saveGlobalToLocal();
       if(currentUser){
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync person to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1327,14 +1422,17 @@
       data.expenses = (data.expenses||[]).filter(e=>e.payer!==name && e.person!==name);
 
       // If using Supabase, remove from all months
-      if(currentUser && fileData.months){
-        for(const month in fileData.months){
-          if(fileData.months[month] && fileData.months[month].expenses){
-            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
+      if(currentUser){
+        // remove from cached remote months and push updates
+        const monthKeys = Object.keys(remoteMonthCache||{});
+        for(const m of monthKeys){
+          if(remoteMonthCache[m] && remoteMonthCache[m].expenses){
+            remoteMonthCache[m].expenses = remoteMonthCache[m].expenses.filter(e=>e.payer!==name && e.person!==name);
+            try{ await saveRemoteMonth(m, remoteMonthCache[m]); }catch(err){ console.error('Failed to sync person removal for month', m, err); }
           }
         }
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync person removal to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1363,7 +1461,7 @@
       saveGlobalToLocal();
       if(currentUser){
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync category to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1380,14 +1478,17 @@
       data.expenses = (data.expenses||[]).filter(e=>e.category!==name);
 
       // If using Supabase, remove from all months
-      if(currentUser && fileData.months){
-        for(const month in fileData.months){
-          if(fileData.months[month] && fileData.months[month].expenses){
-            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
+      if(currentUser){
+        // remove from cached remote months and push updates
+        const monthKeys = Object.keys(remoteMonthCache||{});
+        for(const m of monthKeys){
+          if(remoteMonthCache[m] && remoteMonthCache[m].expenses){
+            remoteMonthCache[m].expenses = remoteMonthCache[m].expenses.filter(e=>e.category!==name);
+            try{ await saveRemoteMonth(m, remoteMonthCache[m]); }catch(err){ console.error('Failed to sync category removal for month', m, err); }
           }
         }
         try{
-          await saveRemote();
+          await saveRemoteGlobals();
         }catch(err){
           console.error('Failed to sync category removal to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
@@ -1444,15 +1545,43 @@
       const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
       const rows=[...batchRows.querySelectorAll('.row')]; if(!rows.length){ alert('Add at least one line'); return; }
       const splits = getSplitsFromSliders(batchSplitSliders);
-      let added=0;
+      const newEntries = [];
       for(const r of rows){
         const cat=r.querySelector('.batchCategory').value;
         const val=parseFloat(r.querySelector('.batchAmount').value);
         const note=(r.querySelector('.batchNote')?.value||'').trim();
-        if(cat && isFinite(val) && val>0){ (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits}); added++; }
+        if(cat && isFinite(val) && val>0){ newEntries.push({payer, category:cat, amount: round2(val), note, splits}); }
       }
-      if(!added){ alert('Please enter valid amounts'); return; }
-      batchRows.innerHTML=''; await save(); renderAll();
+      if(!newEntries.length){ alert('Please enter valid amounts'); return; }
+      setButtonLoading(saveBatchBtn, true);
+      addBatchRowBtn.disabled = true;
+      clearBatchBtn.disabled = true;
+      try{
+        data.expenses = (data.expenses||[]).concat(newEntries);
+        ensureMonthsContainer();
+        // Optimistically render so the UI updates even if cloud save is slow
+        renderAll();
+        let cloudOk = false;
+        try{
+          cloudOk = await withTimeout(save(), 15000, 'Cloud save');
+        }catch(err){
+          console.error('Cloud save timed out or failed', err);
+          cloudOk = false;
+        }
+        renderAll(); // reflect lastEdited timestamp after save
+        if(cloudOk){
+          batchRows.innerHTML='';
+        } else {
+          alert('Saved locally but could not sync to the cloud. The lines are kept so you can retry.');
+        }
+      }catch(err){
+        console.error('Failed to save batch expenses', err);
+        alert('Saving the batch failed. Your lines are kept so you can try again.');
+      }finally{
+        setButtonLoading(saveBatchBtn, false);
+        addBatchRowBtn.disabled = false;
+        clearBatchBtn.disabled = false;
+      }
     }
 
     // ---------- Init & events ----------
@@ -1460,6 +1589,8 @@
       initSupabase();
       if(supabaseClient){
         await refreshSession();
+        // Keep session warm to reduce idle expiry surprises
+        setInterval(()=>{ ensureFreshSession(); }, 5*60*1000);
 
         // Handle email confirmation and password reset links
         const handleAuthCallback = async () => {
@@ -1543,6 +1674,12 @@
         await switchMonthSafely(target);
         buildSplitSliders(quickSplitSliders);
         buildSplitSliders(batchSplitSliders);
+        renderAverages();
+      });
+
+      avgYearSelect.addEventListener('change', ()=>{
+        selectedYear = avgYearSelect.value;
+        renderAverages();
       });
 
       addPersonBtn.addEventListener('click', async ()=>{
