@@ -1036,7 +1036,7 @@
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+p+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove '+p+' and their expenses from ALL months?')) { removePerson(p); }});
+        c.querySelector('.x').addEventListener('click', async ()=>{ if(confirm('Remove '+p+' and their expenses from ALL months?')) { await removePerson(p); }});
         peopleChips.appendChild(c);
       }
       categoriesChips.innerHTML = '';
@@ -1044,7 +1044,7 @@
         const c = document.createElement('span');
         c.className='chip';
         c.innerHTML = '<span>'+cName+'</span><span class="x" title="Remove">✖</span>';
-        c.querySelector('.x').addEventListener('click',()=>{ if(confirm('Remove category \"'+cName+'\" from ALL months?')) { removeCategory(cName); }});
+        c.querySelector('.x').addEventListener('click', async ()=>{ if(confirm('Remove category \"'+cName+'\" from ALL months?')) { await removeCategory(cName); }});
         categoriesChips.appendChild(c);
       }
       fillSelect(quickPerson, (fileData.people||[]));
@@ -1283,14 +1283,21 @@
     function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
 
     function save(){ setLastEditedNow(); persist(); }
-    function addPerson(name){
+    async function addPerson(name){
       name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
       (fileData.people = fileData.people||[]).push(name);
       saveGlobalToLocal();
-      if(currentUser){ saveRemote().catch(err => console.error('Failed to sync person to cloud:', err)); }
+      if(currentUser){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync person to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      }
       renderPeopleCats();
     }
-    function removePerson(name){
+    async function removePerson(name){
       // Remove from global list
       fileData.people = (fileData.people||[]).filter(p=>p!==name);
       saveGlobalToLocal();
@@ -1305,7 +1312,12 @@
             fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
           }
         }
-        saveRemote().catch(err => console.error('Failed to sync person removal to cloud:', err));
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync person removal to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
       } else {
         // If using local storage, clean up all saved months
         for(const month of listSavedMonthsLocal()){
@@ -1324,14 +1336,21 @@
 
       save(); renderAll();
     }
-    function addCategory(name){
+    async function addCategory(name){
       name = (name||'').trim(); if(!name) return; if((fileData.categories||[]).includes(name)) return;
       (fileData.categories = fileData.categories||[]).push(name);
       saveGlobalToLocal();
-      if(currentUser){ saveRemote().catch(err => console.error('Failed to sync category to cloud:', err)); }
+      if(currentUser){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync category to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      }
       renderPeopleCats();
     }
-    function removeCategory(name){
+    async function removeCategory(name){
       // Remove from global list
       fileData.categories = (fileData.categories||[]).filter(c=>c!==name);
       saveGlobalToLocal();
@@ -1346,7 +1365,12 @@
             fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
           }
         }
-        saveRemote().catch(err => console.error('Failed to sync category removal to cloud:', err));
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync category removal to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
       } else {
         // If using local storage, clean up all saved months
         for(const month of listSavedMonthsLocal()){
@@ -1500,14 +1524,14 @@
         buildSplitSliders(batchSplitSliders);
       });
 
-      addPersonBtn.addEventListener('click', ()=>{
-        const v = personNameEl.value; personNameEl.value=''; addPerson(v); personNameEl.focus();
+      addPersonBtn.addEventListener('click', async ()=>{
+        const v = personNameEl.value; personNameEl.value=''; await addPerson(v); personNameEl.focus();
         buildSplitSliders(quickSplitSliders); buildSplitSliders(batchSplitSliders);
       });
       personNameEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ addPersonBtn.click(); }});
 
-      addCategoryBtn.addEventListener('click', ()=>{
-        const v = categoryNameEl.value; categoryNameEl.value=''; addCategory(v); categoryNameEl.focus();
+      addCategoryBtn.addEventListener('click', async ()=>{
+        const v = categoryNameEl.value; categoryNameEl.value=''; await addCategory(v); categoryNameEl.focus();
       });
 
       modeQuickBtn.addEventListener('click', ()=>{
