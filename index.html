@@ -293,6 +293,26 @@
 <link rel="icon" href="/family-accounts/favicon-48.png" sizes="48x48" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
+<script>
+  // Unregister old service worker if it exists
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.getRegistrations().then(registrations => {
+      registrations.forEach(registration => {
+        registration.unregister().then(() => {
+          console.log('Old service worker unregistered');
+        });
+      });
+    });
+    // Also clear caches
+    if ('caches' in window) {
+      caches.keys().then(cacheNames => {
+        cacheNames.forEach(cacheName => {
+          caches.delete(cacheName);
+        });
+      });
+    }
+  }
+</script>
 </head>
 <body>
   <div class="wrap">
