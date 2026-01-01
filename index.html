@@ -525,7 +525,10 @@
           </div>
           <div class="row" style="margin-top:10px">
             <div class="col" style="flex:1">
-              <div class="card-title" style="font-weight:700">Average by category — YTD</div>
+              <div class="label-select">
+                <div class="card-title" style="font-weight:700">Average by category — YTD</div>
+                <select id="avgCatYearSelect" style="max-width:140px"></select>
+              </div>
               <div id="avgCatYTD"></div>
             </div>
             <div class="col" style="flex:1">
@@ -589,6 +592,7 @@
     const avgYearSelect = document.getElementById('avgYearSelect');
     const avgYTD = document.getElementById('avgYTD');
     const avgAll = document.getElementById('avgAll');
+    const avgByYear = document.getElementById('avgByYear');
     const avgCatYTD = document.getElementById('avgCatYTD');
     const avgCatAll = document.getElementById('avgCatAll');
 
@@ -1256,13 +1260,26 @@
       const totalAll = sumTotal(allData), totalYTD = sumTotal(ytd);
       const avgAllVal = allMonthsCount ? round2(totalAll / allMonthsCount) : 0;
       const avgYTDVal = ytdMonthsCount ? round2(totalYTD / ytdMonthsCount) : 0;
+      // Per-year averages
+      const perYearTotals = {};
+      const perYearCounts = {};
+      allData.forEach(({m,d})=>{
+        const yr = m.split('-')[0];
+        perYearTotals[yr] = (perYearTotals[yr]||0) + (d.expenses||[]).reduce((a,e)=>a+(+e.amount||0),0);
+        perYearCounts[yr] = (perYearCounts[yr]||0) + 1;
+      });
+      const avgPerYear = {};
+      Object.keys(perYearTotals).forEach(yr=>{
+        const cnt = perYearCounts[yr]||0;
+        avgPerYear[yr] = cnt ? round2(perYearTotals[yr]/cnt) : 0;
+      });
       const catsAllTotals = {}, catsYtdTotals = {}; const catSetAll = new Set(), catSetYTD = new Set();
       allData.forEach(({d})=>{ (d.expenses||[]).forEach(e=>{ if(e.category) catSetAll.add(e.category); catsAllTotals[e.category]=(catsAllTotals[e.category]||0)+(+e.amount||0); }); });
       ytd.forEach(({d})=>{ (d.expenses||[]).forEach(e=>{ if(e.category) catSetYTD.add(e.category); catsYtdTotals[e.category]=(catsYtdTotals[e.category]||0)+(+e.amount||0); }); });
       const avgCatAllMap = {}, avgCatYTDMap = {};
       for(const c of catSetAll){ avgCatAllMap[c] = allMonthsCount ? round2((catsAllTotals[c]||0)/allMonthsCount) : 0; }
       for(const c of catSetYTD){ avgCatYTDMap[c] = ytdMonthsCount ? round2((catsYtdTotals[c]||0)/ytdMonthsCount) : 0; }
-      return {avgAllVal, avgYTDVal, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount};
+      return {avgAllVal, avgYTDVal, avgPerYear, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount};
     }
     function tableFromMap(mapObj, leftHeader, rightHeader){
       const keys = Object.keys(mapObj).sort((a,b)=> mapObj[b]-mapObj[a]); if(!keys.length) return '<div class="muted">No data yet.</div>';
