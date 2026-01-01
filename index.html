@@ -1232,9 +1232,11 @@
 
     async function saveRemote(){
       if(!supabaseClient || !currentUser) return;
+      // Capture fileData snapshot immediately to prevent corruption if fileData is reset during save
+      const dataSnapshot = JSON.parse(JSON.stringify(fileData));
       const payload = {
         user_id: currentUser.id,
-        data: fileData,
+        data: dataSnapshot,
         updated_at: new Date().toISOString()
       };
       const { error } = await supabaseClient
