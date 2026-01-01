@@ -642,6 +642,12 @@
     function defaultData(){
       return {expenses:[], lastEdited: new Date().toISOString()};
     }
+    function withTimeout(promise, ms, label='operation'){
+      return Promise.race([
+        promise,
+        new Promise((_, rej)=> setTimeout(()=>rej(new Error(label+' timed out')), ms))
+      ]);
+    }
     function editedMs(obj){
       const t = Date.parse(obj?.lastEdited);
       return Number.isFinite(t) ? t : -Infinity;
@@ -900,7 +906,7 @@
         fileData.months[monthEl.value] = data;
         if(stillAuthed){
           try{
-            await saveRemote();
+            await withTimeout(saveRemote(), 15000, 'Cloud sync');
           }catch(err){
             cloudOk = false;
             console.error('Failed to sync to cloud:', err);
@@ -1517,7 +1523,13 @@
         ensureMonthsContainer();
         // Optimistically render so the UI updates even if cloud save is slow
         renderAll();
-        const cloudOk = await save();
+        let cloudOk = false;
+        try{
+          cloudOk = await withTimeout(save(), 15000, 'Cloud save');
+        }catch(err){
+          console.error('Cloud save timed out or failed', err);
+          cloudOk = false;
+        }
         renderAll(); // reflect lastEdited timestamp after save
         if(cloudOk){
           batchRows.innerHTML='';
@@ -1539,6 +1551,8 @@
       initSupabase();
       if(supabaseClient){
         await refreshSession();
+        // Keep session warm to reduce idle expiry surprises
+        setInterval(()=>{ ensureFreshSession(); }, 5*60*1000);
 
         // Handle email confirmation and password reset links
         const handleAuthCallback = async () => {
