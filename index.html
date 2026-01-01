@@ -1509,11 +1509,16 @@
         if(cat && isFinite(val) && val>0){ newEntries.push({payer, category:cat, amount: round2(val), note, splits}); }
       }
       if(!newEntries.length){ alert('Please enter valid amounts'); return; }
+      setButtonLoading(saveBatchBtn, true);
+      addBatchRowBtn.disabled = true;
+      clearBatchBtn.disabled = true;
       try{
         data.expenses = (data.expenses||[]).concat(newEntries);
         ensureMonthsContainer();
-        const cloudOk = await save();
+        // Optimistically render so the UI updates even if cloud save is slow
         renderAll();
+        const cloudOk = await save();
+        renderAll(); // reflect lastEdited timestamp after save
         if(cloudOk){
           batchRows.innerHTML='';
         } else {
@@ -1522,6 +1527,10 @@
       }catch(err){
         console.error('Failed to save batch expenses', err);
         alert('Saving the batch failed. Your lines are kept so you can try again.');
+      }finally{
+        setButtonLoading(saveBatchBtn, false);
+        addBatchRowBtn.disabled = false;
+        clearBatchBtn.disabled = false;
       }
     }
 
