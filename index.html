@@ -773,6 +773,16 @@
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
     function debounceSave(){ clearTimeout(saveDebounce); saveDebounce = setTimeout(()=>persist(), 400); }
+    function withTimeout(promise, ms, label){
+      let timeoutId;
+      const timeout = new Promise((_, reject)=>{
+        timeoutId = setTimeout(()=>{
+          const message = label ? `${label} timed out` : 'Operation timed out';
+          reject(new Error(message));
+        }, ms);
+      });
+      return Promise.race([promise, timeout]).finally(()=> clearTimeout(timeoutId));
+    }
     function setModeBadge(){
       if(currentUser){
         modeBadge.textContent = `Signed in: ${currentUser.email}`;
@@ -1948,21 +1958,28 @@
         if(!supabaseClient){ return; }
         hideAuthMessage();
         setButtonLoading(signOutBtn, true);
+        let signOutError = null;
         try {
-          await supabaseClient.auth.signOut();
-          currentUser = null;
-          currentSession = null;
-          fileData = { people: [], categories: [], months: {} };
-          // Load global data from local storage after signing out
-          loadGlobalFromLocal();
-          updateAuthStatus();
-          renderAll();
-          renderAverages();
-          showAuthMessage('Successfully signed out.', 'success');
-          authPassword.value = ''; // Clear password field
-        } finally {
-          setButtonLoading(signOutBtn, false);
+          await withTimeout(supabaseClient.auth.signOut(), 5000, 'Sign out');
+        } catch(err){
+          signOutError = err;
+          console.warn('Sign out failed', err);
         }
+        currentUser = null;
+        currentSession = null;
+        fileData = { people: [], categories: [], months: {} };
+        // Load global data from local storage after signing out
+        loadGlobalFromLocal();
+        updateAuthStatus();
+        renderAll();
+        renderAverages();
+        if(signOutError){
+          showAuthMessage('Signed out locally. Cloud sign-out may have timed out.', 'info');
+        } else {
+          showAuthMessage('Successfully signed out.', 'success');
+        }
+        authPassword.value = ''; // Clear password field
+        setButtonLoading(signOutBtn, false);
       });
 
       forgotPasswordBtn.addEventListener('click', async ()=>{
