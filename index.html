@@ -604,6 +604,7 @@
     let fileData = { people: [], categories: [], months: {} }; // Global people/categories + months
     let saveDebounce = null;
     let lastLoadedMonth = null;
+    let activeMonth = null;
     let supabaseClient = null;
     let currentUser = null;
     let currentSession = null;
@@ -687,6 +688,27 @@
       if(!incoming) return false;
       return !hasExpenses(existing) && hasExpenses(incoming);
     }
+    function isNewerMonthData(localData, remoteData){
+      if(!localData) return false;
+      if(!remoteData) return true;
+      const localTime = Date.parse(localData.lastEdited || '') || 0;
+      const remoteTime = Date.parse(remoteData.lastEdited || '') || 0;
+      if(localTime && remoteTime && localTime > remoteTime) return true;
+      const localCount = (localData.expenses || []).length;
+      const remoteCount = (remoteData.expenses || []).length;
+      return localCount > remoteCount;
+    }
+    function getLocalMonthData(monthKey){
+      const raw = localStorage.getItem(keyFor(normalizeMonthKey(monthKey)));
+      if(!raw) return null;
+      try{
+        const parsed = JSON.parse(raw);
+        return normalizeMonthData(parsed);
+      }catch{
+        return null;
+      }
+    }
+
     function findMonthKeyInMap(monthKey){
       const normalized = normalizeMonthKey(monthKey);
       const months = fileData?.months || {};
@@ -695,6 +717,24 @@
       const match = keys.find(k => normalizeMonthKey(k) === normalized);
       return match || normalized;
     }
+    async function ensureFreshSession(){
+      if(!supabaseClient) return false;
+      if(currentSession?.refresh_token){
+        try{
+          const { data, error } = await supabaseClient.auth.refreshSession({ refresh_token: currentSession.refresh_token });
+          if(!error && data?.session){
+            currentSession = data.session;
+            currentUser = data.session.user;
+            return true;
+          }
+        }catch(err){
+          console.warn('Failed to refresh session', err);
+        }
+      }
+      await refreshSession();
+      return !!currentSession?.access_token;
+    }
+
     async function getAuthHeaders(){
       if(!currentSession?.access_token && supabaseClient){
         const { data: sessionData } = await supabaseClient.auth.getSession();
@@ -710,8 +750,14 @@
         Accept: 'application/json'
       };
     }
-    async function fetchJson(url, options){
+    async function fetchJson(url, options, retryAuth = true){
       const res = await fetch(url, options);
+      if(res.status === 401 && retryAuth){
+        const refreshed = await ensureFreshSession();
+        if(refreshed){
+          return await fetchJson(url, options, false);
+        }
+      }
       if(!res.ok){
         const text = await res.text();
         throw new Error(`HTTP ${res.status}: ${text}`);
@@ -906,10 +952,12 @@
         data = defaultData();
         localStorage.setItem(keyFor(month), JSON.stringify(data));
       }
+      activeMonth = normalizeMonthKey(month);
     }
-    function localSaveCurrent(){
+    function localSaveCurrent(monthKey, payload){
       // Only save expenses and lastEdited for each month
-      localStorage.setItem(keyFor(monthEl.value), JSON.stringify(data));
+      const key = keyFor(monthKey || monthEl.value);
+      localStorage.setItem(key, JSON.stringify(payload || data));
     }
     function saveGlobalToLocal(){
       // Save global people and categories
@@ -1005,6 +1053,7 @@
 
     async function loadFromFileOrLocal(month){
       const normalizedMonth = normalizeMonthKey(month);
+      activeMonth = normalizedMonth;
       if(currentUser){
         const mapKey = findMonthKeyInMap(normalizedMonth);
         const existing = (fileData.months && fileData.months[mapKey]) || null;
@@ -1050,17 +1099,20 @@
     }
 
     async function persist(){
-      try{ localSaveCurrent(); }catch{}
+      const targetMonth = activeMonth || monthEl.value;
+      const normalizedMonth = normalizeMonthKey(targetMonth);
+      const snapshot = JSON.parse(JSON.stringify(data || defaultData()));
+      try{ localSaveCurrent(normalizedMonth, snapshot); }catch{}
+      data = snapshot;
       if(currentUser){
-        const normalizedMonth = normalizeMonthKey(monthEl.value);
-        fileData.months[normalizedMonth] = data;
+        fileData.months[normalizedMonth] = snapshot;
         try{
           await saveRemote();
         }catch(err){
           console.error('Failed to sync to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
         }
-        await saveRemoteMonth(normalizedMonth, data);
+        await saveRemoteMonth(normalizedMonth, snapshot);
       } else {
         saveGlobalToLocal();
       }
@@ -1498,6 +1550,24 @@
       }
       for(const key of backfillMonths){
         await saveRemoteMonth(key, monthsRowMap[key]);
+      }
+
+      // Local storage fallback: prefer newer local data if remote is stale.
+      const localMonths = listSavedMonthsLocal();
+      const localUpdates = [];
+      for(const localKey of localMonths){
+        const localData = getLocalMonthData(localKey);
+        if(!localData) continue;
+        const key = normalizeMonthKey(localKey);
+        const existing = fileData.months[key];
+        if(isNewerMonthData(localData, existing)){
+          fileData.months[key] = localData;
+          localUpdates.push(key);
+          needsSave = true;
+        }
+      }
+      for(const key of localUpdates){
+        await saveRemoteMonth(key, fileData.months[key]);
       }
 
       // Migrate people/categories from month records if missing.
