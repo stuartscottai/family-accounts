@@ -47,11 +47,17 @@
     }
     .logo{
       width:32px;height:32px;
-      background:linear-gradient(135deg, #14b8a6, #0d9488);
       border-radius:8px;
       display:flex;align-items:center;justify-content:center;
-      font-size:18px;
       flex-shrink:0;
+      overflow:hidden;
+      background:transparent;
+    }
+    .logo img{
+      width:100%;
+      height:100%;
+      object-fit:contain;
+      display:block;
     }
     .header-right{
       display:flex;align-items:center;gap:8px;
@@ -289,10 +295,10 @@
       .split-slider-row .split-value{flex:0 0 40px;font-size:13px}
     }
   </style>
-<link rel="manifest" href="/family-accounts/manifest.webmanifest?v=3" />
+<link rel="manifest" href="manifest.webmanifest?v=3" />
 <meta name="theme-color" content="#ffffff" />
-<link rel="icon" href="/family-accounts/favicon-32.png" sizes="32x32" />
-<link rel="icon" href="/family-accounts/favicon-48.png" sizes="48x48" />
+<link rel="icon" href="public/favicon-32.png" sizes="32x32" />
+<link rel="icon" href="public/favicon-48.png" sizes="48x48" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
 <script>
@@ -320,7 +326,7 @@
   <div class="wrap">
     <div class="header">
       <div class="title">
-        <div class="logo">💰</div>
+        <div class="logo"><img src="public/favicon-32.png" alt="Family Accounts logo" /></div>
         <span>Family Accounts</span>
       </div>
       <div class="header-right">
