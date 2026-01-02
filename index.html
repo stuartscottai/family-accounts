@@ -579,6 +579,7 @@
     const avgYTD = document.getElementById('avgYTD');
     const avgAll = document.getElementById('avgAll');
     const avgByYear = document.getElementById('avgByYear');
+    const avgCatYearSelect = document.getElementById('avgCatYearSelect');
     const avgCatYTD = document.getElementById('avgCatYTD');
     const avgCatAll = document.getElementById('avgCatAll');
 
@@ -599,6 +600,7 @@
     let lastLoadedMonth = null;
     let supabaseClient = null;
     let currentUser = null;
+    let currentSession = null;
 
     // ---------- Supabase config ----------
     //
@@ -643,6 +645,130 @@
     function keyFor(month){ return `famacct:${month}` }
     function defaultData(){
       return {expenses:[], lastEdited: new Date().toISOString()};
+    }
+    function normalizeMonthKey(month){
+      const raw = String(month || '').trim();
+      const match = /^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$/.exec(raw);
+      if(match){
+        return `${match[1]}-${match[2].padStart(2,'0')}`;
+      }
+      return raw;
+    }
+    function normalizeMonthData(raw){
+      let payload = raw;
+      if(typeof payload === 'string'){
+        try{
+          payload = JSON.parse(payload);
+        }catch{
+          payload = {};
+        }
+      }
+      if(payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object'){
+        if(Array.isArray(payload.data.expenses)){
+          payload = payload.data;
+        }
+      }
+      const safe = (payload && typeof payload === 'object') ? { ...payload } : {};
+      safe.expenses = Array.isArray(safe.expenses) ? safe.expenses : [];
+      if(!safe.lastEdited){ safe.lastEdited = new Date().toISOString(); }
+      return safe;
+    }
+    function hasExpenses(monthData){
+      return Array.isArray(monthData?.expenses) && monthData.expenses.length > 0;
+    }
+    function shouldReplaceMonth(existing, incoming){
+      if(!existing) return true;
+      if(!incoming) return false;
+      return !hasExpenses(existing) && hasExpenses(incoming);
+    }
+    function findMonthKeyInMap(monthKey){
+      const normalized = normalizeMonthKey(monthKey);
+      const months = fileData?.months || {};
+      if(months[normalized]) return normalized;
+      const keys = Object.keys(months);
+      const match = keys.find(k => normalizeMonthKey(k) === normalized);
+      return match || normalized;
+    }
+    async function getAuthHeaders(){
+      if(!currentSession?.access_token && supabaseClient){
+        const { data: sessionData } = await supabaseClient.auth.getSession();
+        if(sessionData?.session){
+          currentSession = sessionData.session;
+          currentUser = sessionData.session.user;
+        }
+      }
+      if(!currentSession?.access_token) return null;
+      return {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${currentSession.access_token}`,
+        Accept: 'application/json'
+      };
+    }
+    async function fetchJson(url, options){
+      const res = await fetch(url, options);
+      if(!res.ok){
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      const text = await res.text();
+      if(!text){
+        return null;
+      }
+      try{
+        return JSON.parse(text);
+      }catch(err){
+        throw new Error(`Invalid JSON response: ${text}`);
+      }
+    }
+    async function fetchMonthsRows(){
+      const headers = await getAuthHeaders();
+      if(!headers || !currentUser) return [];
+      const url = `${SUPABASE_URL}/rest/v1/family_account_months?select=month,data&user_id=eq.${encodeURIComponent(currentUser.id)}`;
+      try{
+        return await fetchJson(url, { headers });
+      }catch(err){
+        console.warn('Failed to fetch month rows', err);
+        return [];
+      }
+    }
+    async function fetchMonthRow(month){
+      const headers = await getAuthHeaders();
+      if(!headers || !currentUser) return null;
+      const key = normalizeMonthKey(month);
+      const url = `${SUPABASE_URL}/rest/v1/family_account_months?select=data&user_id=eq.${encodeURIComponent(currentUser.id)}&month=eq.${encodeURIComponent(key)}&limit=1`;
+      try{
+        const rows = await fetchJson(url, { headers });
+        if(Array.isArray(rows) && rows.length && rows[0]?.data){
+          return rows[0].data;
+        }
+      }catch(err){
+        console.warn('Failed to fetch month row', err);
+      }
+      return null;
+    }
+    async function upsertMonthRow(month, monthData){
+      const headers = await getAuthHeaders();
+      if(!headers || !currentUser) return;
+      const key = normalizeMonthKey(month);
+      const url = `${SUPABASE_URL}/rest/v1/family_account_months?on_conflict=user_id,month`;
+      const body = JSON.stringify([{
+        user_id: currentUser.id,
+        month: key,
+        data: monthData
+      }]);
+      try{
+        await fetchJson(url, {
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates,return=minimal'
+          },
+          body
+        });
+      }catch(err){
+        console.warn('Failed to upsert month row', err);
+      }
     }
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
@@ -835,49 +961,90 @@
       return months;
     }
 
-    function listSavedMonthsRemote(){ return Object.keys(fileData.months||{}).sort((a,b)=> a<b?1:(a>b?-1:0)); }
+    function listSavedMonthsRemote(){
+      const months = Object.keys(fileData.months||{});
+      const seen = new Set();
+      const normalized = [];
+      for(const m of months){
+        const key = normalizeMonthKey(m);
+        if(seen.has(key)) continue;
+        seen.add(key);
+        normalized.push(key);
+      }
+      normalized.sort((a,b)=> a<b?1:(a>b?-1:0));
+      return normalized;
+    }
 
     // ---------- Shared load/save ----------
     function monthExists(month){
-      if(currentUser) return !!(fileData.months && fileData.months[month]);
-      return localStorage.getItem(keyFor(month)) != null;
+      const normalizedMonth = normalizeMonthKey(month);
+      if(currentUser){
+        if(fileData.months){
+          const mapKey = findMonthKeyInMap(normalizedMonth);
+          if(fileData.months[mapKey]) return true;
+        }
+      }
+      return localStorage.getItem(keyFor(normalizedMonth)) != null;
     }
 
     async function loadFromFileOrLocal(month){
+      const normalizedMonth = normalizeMonthKey(month);
       if(currentUser){
-        data = fileData.months[month];
-        if(!data){
-          const localRaw = localStorage.getItem(keyFor(month));
-          if(localRaw){
-            try{
-              const parsed = JSON.parse(localRaw);
-              // Only keep expenses and lastEdited
-              data = {
-                expenses: parsed.expenses || [],
-                lastEdited: parsed.lastEdited || new Date().toISOString()
-              };
-            }catch{
-              data = defaultData();
+        const mapKey = findMonthKeyInMap(normalizedMonth);
+        const existing = (fileData.months && fileData.months[mapKey]) || null;
+        if(existing){
+          const normalizedExisting = normalizeMonthData(existing);
+          if(!hasExpenses(normalizedExisting)){
+            const remoteData = await loadRemoteMonth(normalizedMonth);
+            const normalizedRemote = remoteData ? normalizeMonthData(remoteData) : null;
+            if(shouldReplaceMonth(normalizedExisting, normalizedRemote)){
+              data = normalizedRemote;
+              fileData.months[normalizedMonth] = data;
+              return;
             }
-          } else {
+          }
+          data = normalizedExisting;
+          fileData.months[normalizedMonth] = data;
+          return;
+        }
+        const remoteData = await loadRemoteMonth(normalizedMonth);
+        if(remoteData){
+          data = normalizeMonthData(remoteData);
+          fileData.months[normalizedMonth] = data;
+          return;
+        }
+        const localRaw = localStorage.getItem(keyFor(normalizedMonth));
+        if(localRaw){
+          try{
+            const parsed = JSON.parse(localRaw);
+            // Only keep expenses and lastEdited
+            data = {
+              expenses: parsed.expenses || [],
+              lastEdited: parsed.lastEdited || new Date().toISOString()
+            };
+          }catch{
             data = defaultData();
           }
+        } else {
+          data = defaultData();
         }
       } else {
-        localLoadMonth(month);
+        localLoadMonth(normalizedMonth);
       }
     }
 
     async function persist(){
       try{ localSaveCurrent(); }catch{}
       if(currentUser){
-        fileData.months[monthEl.value] = data;
+        const normalizedMonth = normalizeMonthKey(monthEl.value);
+        fileData.months[normalizedMonth] = data;
         try{
           await saveRemote();
         }catch(err){
           console.error('Failed to sync to cloud:', err);
           alert('Warning: Failed to sync to cloud. Please check your connection.');
         }
+        await saveRemoteMonth(normalizedMonth, data);
       } else {
         saveGlobalToLocal();
       }
@@ -1150,17 +1317,58 @@
       if(currentValue) selectEl.value = currentValue; // Restore selection if it still exists
     }
 
+    function getAvailableYears(months){
+      const years = new Set();
+      for(const m of months){
+        const key = normalizeMonthKey(m);
+        if(key && key.includes('-')){
+          years.add(key.split('-')[0]);
+        }
+      }
+      return Array.from(years).sort((a,b)=> Number(b) - Number(a));
+    }
+    function resolveAverageYear(years){
+      const selected = avgCatYearSelect ? avgCatYearSelect.value : '';
+      if(selected && years.includes(selected)) return selected;
+      const currentYear = String(new Date().getFullYear());
+      if(years.includes(currentYear)) return currentYear;
+      return years[0] || currentYear;
+    }
+    function syncAverageYearSelect(years, selectedYear){
+      if(!avgCatYearSelect) return;
+      avgCatYearSelect.innerHTML = '';
+      if(!years.length){
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No data';
+        avgCatYearSelect.appendChild(opt);
+        avgCatYearSelect.disabled = true;
+        return;
+      }
+      avgCatYearSelect.disabled = false;
+      for(const year of years){
+        const opt = document.createElement('option');
+        opt.value = year;
+        opt.textContent = year;
+        avgCatYearSelect.appendChild(opt);
+      }
+      avgCatYearSelect.value = selectedYear;
+    }
+
     // Averages across months (from local or file)
     function listSavedMonths(){ return currentUser ? listSavedMonthsRemote() : listSavedMonthsLocal(); }
     function getMonthData(m){
-      if(currentUser) return fileData.months[m] || defaultData(null);
+      if(currentUser){
+        const mapKey = findMonthKeyInMap(m);
+        return fileData.months[mapKey] || defaultData(null);
+      }
       const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
       try{ return JSON.parse(raw); }catch{return defaultData(null);} }
-    function computeAverages(){
+    function computeAverages(selectedYear){
       const months = listSavedMonths();
       const allData = months.map(m=>({m, d:getMonthData(m)})).filter(x=>x.d);
-      const year = new Date().getFullYear();
-      const ytd = allData.filter(x => x.m.startsWith(year + '-'));
+      const year = String(selectedYear || new Date().getFullYear());
+      const ytd = allData.filter(x => normalizeMonthKey(x.m).startsWith(year + '-'));
       const allMonthsCount = allData.length, ytdMonthsCount = ytd.length;
       const sumTotal = (arr)=> arr.reduce((s,x)=> s + (x.d.expenses||[]).reduce((a,e)=>a+(+e.amount||0),0), 0);
       const totalAll = sumTotal(allData), totalYTD = sumTotal(ytd);
@@ -1194,7 +1402,11 @@
       html += '</tbody></table>'; return html;
     }
     function renderAverages(){
-      const {avgAllVal, avgYTDVal, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount} = computeAverages();
+      const months = listSavedMonths();
+      const years = getAvailableYears(months);
+      const year = resolveAverageYear(years);
+      syncAverageYearSelect(years, year);
+      const {avgAllVal, avgYTDVal, avgCatAllMap, avgCatYTDMap, allMonthsCount, ytdMonthsCount} = computeAverages(year);
       avgAll.textContent = euro(avgAllVal) + (allMonthsCount?(' ('+allMonthsCount+' mo.)'):'');
       avgYTD.textContent = euro(avgYTDVal) + (ytdMonthsCount?(' ('+ytdMonthsCount+' mo. YTD)'):'');
       avgCatAll.innerHTML = tableFromMap(avgCatAllMap, 'Category', 'Avg / month (All)');
@@ -1212,6 +1424,7 @@
 
     async function loadRemote(){
       if(!supabaseClient || !currentUser) return;
+      let needsSave = false;
       const { data: rows, error } = await supabaseClient
         .from('family_account_data')
         .select('data')
@@ -1221,91 +1434,92 @@
         console.error(error);
         return;
       }
-<<<<<<< ours
-      if(globals && globals.data){
-        fileData = globals.data || { people: [], categories: [] };
-<<<<<<< ours
-      } else {
-        fileData = { people: [], categories: [] };
-        await saveRemoteGlobals(); // initialize row
-      }
-      if(!fileData.people) fileData.people = [];
-      if(!fileData.categories) fileData.categories = [];
-
-      // Load all months (separate rows) for caching + averages
-      const { data: monthsData, error: monthsError } = await supabaseClient
-        .from('family_account_months')
-        .select('month,data')
-        .eq('user_id', currentUser.id);
-      if(monthsError){
-        console.error('Failed to load months from Supabase', monthsError);
-        remoteMonths = [];
-        remoteMonthCache = {};
-      } else {
-=======
-      } else {
-        fileData = { people: [], categories: [] };
-        await saveRemoteGlobals(); // initialize row
-      }
-      if(!fileData.people) fileData.people = [];
-      if(!fileData.categories) fileData.categories = [];
-
-      // Load all months (separate rows) for caching + averages
-      const { data: monthsData, error: monthsError } = await supabaseClient
-        .from('family_account_months')
-        .select('month,data')
-        .eq('user_id', currentUser.id);
-      if(monthsError){
-        console.error('Failed to load months from Supabase', monthsError);
-        remoteMonths = [];
-        remoteMonthCache = {};
-      } else {
->>>>>>> theirs
-        remoteMonths = (monthsData||[]).map(r=>r.month);
-        remoteMonthCache = {};
-        (monthsData||[]).forEach(r=>{
-          if(r && r.month && r.data){ remoteMonthCache[r.month]=r.data; }
-        });
-=======
       if(rows && rows.length){
         fileData = rows[0].data || { people: [], categories: [], months: {} };
-        // Ensure people and categories arrays exist
-        if(!fileData.people) fileData.people = [];
-        if(!fileData.categories) fileData.categories = [];
-
-        // If Supabase data is missing people/categories, migrate from existing months
-        if(fileData.people.length === 0 && fileData.categories.length === 0){
-          console.log('Supabase data missing people/categories - extracting from existing months...');
-          const allPeople = new Set();
-          const allCategories = new Set();
-
-          // Scan all months in Supabase data for people/categories
-          if(fileData.months && typeof fileData.months === 'object'){
-            for(const [month, monthData] of Object.entries(fileData.months)){
-              if(monthData && typeof monthData === 'object'){
-                if(monthData.people && Array.isArray(monthData.people)){
-                  monthData.people.forEach(p => allPeople.add(String(p).trim()));
-                }
-                if(monthData.categories && Array.isArray(monthData.categories)){
-                  monthData.categories.forEach(c => allCategories.add(String(c).trim()));
-                }
-              }
-            }
-          }
-
-          if(allPeople.size > 0 || allCategories.size > 0){
-            fileData.people = Array.from(allPeople).filter(Boolean);
-            fileData.categories = Array.from(allCategories).filter(Boolean);
-            console.log('Migrated from Supabase months:', fileData.people.length, 'people and', fileData.categories.length, 'categories');
-            // Save updated structure back to Supabase
-            await saveRemote();
-          }
-        }
       } else {
         fileData = { people: [], categories: [], months: {} };
-        await saveRemote();
->>>>>>> theirs
+        needsSave = true;
       }
+
+      if(!fileData.people) fileData.people = [];
+      if(!fileData.categories) fileData.categories = [];
+      if(!fileData.months || typeof fileData.months !== 'object') fileData.months = {};
+
+      // Load legacy per-month rows if they exist and merge into months map.
+      const monthsRows = await fetchMonthsRows();
+      const monthsRowMap = {};
+      if(Array.isArray(monthsRows) && monthsRows.length){
+        for(const row of monthsRows){
+          const key = normalizeMonthKey(row?.month);
+          const incoming = row?.data ? normalizeMonthData(row.data) : null;
+          if(key && incoming){
+            monthsRowMap[key] = incoming;
+          }
+        }
+      }
+      for(const [key, incoming] of Object.entries(monthsRowMap)){
+        const existing = key ? fileData.months[key] : null;
+        if(key && incoming && shouldReplaceMonth(existing, incoming)){
+          fileData.months[key] = incoming;
+          needsSave = true;
+        }
+      }
+
+      // Backfill per-month rows from the global months map if they are missing/empty.
+      const backfillMonths = [];
+      for(const [rawKey, monthData] of Object.entries(fileData.months || {})){
+        const key = normalizeMonthKey(rawKey);
+        const normalized = normalizeMonthData(monthData);
+        const existingRow = monthsRowMap[key];
+        if(shouldReplaceMonth(existingRow, normalized)){
+          monthsRowMap[key] = normalized;
+          backfillMonths.push(key);
+        }
+        if(rawKey !== key){
+          fileData.months[key] = normalized;
+          needsSave = true;
+        }
+      }
+      for(const key of backfillMonths){
+        await saveRemoteMonth(key, monthsRowMap[key]);
+      }
+
+      // Migrate people/categories from month records if missing.
+      if(fileData.people.length === 0 && fileData.categories.length === 0){
+        const allPeople = new Set();
+        const allCategories = new Set();
+        for(const monthData of Object.values(fileData.months)){
+          if(monthData && typeof monthData === 'object'){
+            if(Array.isArray(monthData.people)){
+              monthData.people.forEach(p => allPeople.add(String(p).trim()));
+            }
+            if(Array.isArray(monthData.categories)){
+              monthData.categories.forEach(c => allCategories.add(String(c).trim()));
+            }
+          }
+        }
+        if(allPeople.size > 0 || allCategories.size > 0){
+          fileData.people = Array.from(allPeople).filter(Boolean);
+          fileData.categories = Array.from(allCategories).filter(Boolean);
+          needsSave = true;
+        }
+      }
+
+      if(needsSave){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to save remote data', err);
+        }
+      }
+    }
+
+    async function loadRemoteMonth(month){
+      return await fetchMonthRow(month);
+    }
+
+    async function saveRemoteMonth(month, monthData){
+      await upsertMonthRow(month, monthData);
     }
 
     async function saveRemote(){
@@ -1326,7 +1540,10 @@
     async function refreshSession(){
       if(!supabaseClient) return;
       const { data: sessionData } = await supabaseClient.auth.getSession();
-      currentUser = sessionData?.session?.user || null;
+      if(sessionData?.session){
+        currentSession = sessionData.session;
+        currentUser = sessionData.session.user;
+      }
       setModeBadge();
     }
 
@@ -1341,24 +1558,17 @@
 
     // ---------- Month switching ----------
     async function switchMonthSafely(targetMonth){
-      if(targetMonth === lastLoadedMonth) return;
-      if(monthExists(targetMonth)){
-        await loadFromFileOrLocal(targetMonth);
-      } else {
-        // Create new month with empty expenses (people/categories are global now)
-        const fresh = defaultData();
-        if(currentUser){
-          fileData.months[targetMonth] = fresh;
-        } else {
-          localStorage.setItem(keyFor(targetMonth), JSON.stringify(fresh));
-        }
-        data = fresh;
+      const normalizedMonth = normalizeMonthKey(targetMonth);
+      if(normalizedMonth === lastLoadedMonth) return;
+      await loadFromFileOrLocal(normalizedMonth);
+      if(!data){
+        data = defaultData();
       }
-      lastLoadedMonth = targetMonth;
-      monthEl.value = targetMonth;
+      lastLoadedMonth = normalizedMonth;
+      monthEl.value = normalizedMonth;
       renderLastEdited();
-      await persist();
       renderAll();
+      renderAverages();
     }
 
     // ---------- Public actions ----------
@@ -1567,7 +1777,8 @@
         }
 
         supabaseClient.auth.onAuthStateChange(async (event, session) => {
-          currentUser = session?.user || null;
+          currentSession = session || null;
+          currentUser = currentSession?.user || null;
           if(currentUser){
             await loadRemote();
             await loadFromFileOrLocal(monthEl.value);
@@ -1599,6 +1810,10 @@
       renderAll();
       renderAverages();
       updateAuthStatus();
+
+      if(avgCatYearSelect){
+        avgCatYearSelect.addEventListener('change', renderAverages);
+      }
 
       monthEl.addEventListener('change', async ()=>{
         const target = monthEl.value;
@@ -1662,10 +1877,14 @@
 
         setButtonLoading(signInBtn, true);
         try {
-          const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+          const { data: signInData, error } = await supabaseClient.auth.signInWithPassword({ email, password });
           if(error){
             showAuthMessage(error.message, 'error');
             return;
+          }
+          if(signInData?.session){
+            currentSession = signInData.session;
+            currentUser = signInData.session.user;
           }
           await refreshSession();
           await loadRemote();
@@ -1732,6 +1951,7 @@
         try {
           await supabaseClient.auth.signOut();
           currentUser = null;
+          currentSession = null;
           fileData = { people: [], categories: [], months: {} };
           // Load global data from local storage after signing out
           loadGlobalFromLocal();
