@@ -17,10 +17,46 @@
       --error:#dc2626;
       --input-bg:#ffffff;
       --input-border:#d4d4d4;
+      --row-bg:#ffffff;
+      --row-alt:#f5f5f5;
+      --table-head-bg:#fafafa;
+      --table-hover:#fafafa;
+      --table-foot:#fafafa;
+      --chip-bg:#f3f4f6;
+      --chip-text:#111827;
+      --chip-border:#e5e7eb;
+      --chip-hover:#e5e7eb;
+      --chip-remove:#6b7280;
+      --chip-remove-hover:#111827;
     }
 
     *{box-sizing:border-box;margin:0;padding:0}
     html,body{height:100%;scroll-behavior:smooth}
+    body.dark{
+      --bg:#0f172a;
+      --card-bg:#111827;
+      --border:#1f2937;
+      --text:#f9fafb;
+      --text-muted:#9ca3af;
+      --accent:#38bdf8;
+      --accent-hover:#0ea5e9;
+      --success:#22c55e;
+      --error:#ef4444;
+      --input-bg:#0b1220;
+      --input-border:#334155;
+      --row-bg:#111827;
+      --row-alt:#0b1220;
+      --table-head-bg:#0b1220;
+      --table-hover:#0f172a;
+      --table-foot:#0b1220;
+      --chip-bg:#1f2937;
+      --chip-text:#e5e7eb;
+      --chip-border:#334155;
+      --chip-hover:#273449;
+      --chip-remove:#94a3b8;
+      --chip-remove-hover:#e5e7eb;
+    }
+
     body{
       margin:0;
       background:var(--bg);
@@ -59,6 +95,14 @@
       object-fit:contain;
       display:block;
     }
+    .toggle-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .switch{position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0}
+    .switch input{opacity:0;width:0;height:0}
+    .slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#cbd5f5;transition:0.2s;border-radius:999px}
+    .slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;top:3px;background:white;transition:0.2s;border-radius:50%}
+    .switch input:checked + .slider{background:var(--accent)}
+    .switch input:checked + .slider:before{transform:translateX(20px)}
+
     .header-right{
       display:flex;align-items:center;gap:8px;
       color:var(--text-muted);font-size:12px;
@@ -92,8 +136,8 @@
     .card-content{padding:20px}
 
     .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
-    .row{padding:12px;border-radius:6px;background:var(--card-bg)}
-    .row:nth-child(even){background:#f5f5f5}
+    .row{padding:12px;border-radius:6px;background:var(--row-bg)}
+    .row:nth-child(even){background:var(--row-alt)}
     .col{display:flex;flex-direction:column;gap:6px}
 
     label{
@@ -159,11 +203,11 @@
 
     .chips{display:flex;gap:8px;flex-wrap:wrap}
     .chip{
-      background:#f5f5f5;
-      color:var(--text);
+      background:var(--chip-bg);
+      color:var(--chip-text);
       padding:8px 12px;
       border-radius:6px;
-      border:1px solid var(--border);
+      border:1px solid var(--chip-border);
       display:inline-flex;
       align-items:center;
       gap:8px;
@@ -172,11 +216,13 @@
     }
     .chip .x{
       cursor:pointer;
-      opacity:0.5;
-      transition:opacity 0.2s ease;
+      opacity:1;
+      color:var(--chip-remove);
+      transition:color 0.2s ease, opacity 0.2s ease;
       font-weight:700;
     }
-    .chip .x:hover{opacity:1}
+    .chip .x:hover{color:var(--chip-remove-hover)}
+    .chip:hover{background:var(--chip-hover)}
 
     /* Clean Table */
     table{
@@ -192,13 +238,13 @@
     th{
       color:var(--text-muted);
       font-weight:600;
-      background:#fafafa;
+      background:var(--table-head-bg);
       font-size:12px;
       text-transform:uppercase;
       letter-spacing:0.5px;
     }
-    tbody tr:hover{background:#fafafa}
-    tfoot td{font-weight:600;background:#fafafa}
+    tbody tr:hover{background:var(--table-hover)}
+    tfoot td{font-weight:600;background:var(--table-foot)}
 
     .seg{
       display:flex;
@@ -341,6 +387,15 @@
         <div class="card-header"><div class="card-title">Account</div><div class="chev">▸</div></div>
         <div class="card-content">
           <div id="authMessage" style="display:none;padding:12px;border-radius:12px;margin-bottom:12px"></div>
+          <div class="row" style="justify-content:space-between;align-items:center">
+            <div class="col">
+              <label for="themeToggle">Dark mode</label>
+            </div>
+            <label class="switch">
+              <input id="themeToggle" type="checkbox" />
+              <span class="slider"></span>
+            </label>
+          </div>
           <div class="row">
             <div class="col" style="flex:1;min-width:220px">
               <label for="authEmail">Email</label>
@@ -598,6 +653,7 @@
     const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
     const authStatus = document.getElementById('authStatus');
     const authMessage = document.getElementById('authMessage');
+    const themeToggle = document.getElementById('themeToggle');
 
     // ---------- App state ----------
     let data = null; // current month data (only expenses and lastEdited)
@@ -854,6 +910,20 @@
     }
     function setLastEditedNow(){ if(data){ data.lastEdited = new Date().toISOString(); renderLastEdited(); } }
     function renderLastEdited(){ lastEditedEl.textContent = formatUK(data?.lastEdited); }
+
+    function applyTheme(mode){
+      const isDark = mode === 'dark';
+      document.body.classList.toggle('dark', isDark);
+      if(themeToggle){ themeToggle.checked = isDark; }
+    }
+    function loadTheme(){
+      const stored = localStorage.getItem('famacct:theme');
+      applyTheme(stored === 'dark' ? 'dark' : 'light');
+    }
+    function saveTheme(isDark){
+      localStorage.setItem('famacct:theme', isDark ? 'dark' : 'light');
+      applyTheme(isDark ? 'dark' : 'light');
+    }
 
     // ---------- Auth utilities ----------
     function showAuthMessage(message, type = 'info'){
@@ -1434,7 +1504,7 @@
       try{ return JSON.parse(raw); }catch{return defaultData(null);} }
     function computeAverages(selectedYear){
       const months = listSavedMonths();
-      const allData = months.map(m=>({m, d:getMonthData(m)})).filter(x=>x.d);
+      const allData = months.map(m=>({m, d:getMonthData(m)})).filter(x=>x.d && (x.d.expenses||[]).length);
       const year = String(selectedYear || new Date().getFullYear());
       const ytd = allData.filter(x => normalizeMonthKey(x.m).startsWith(year + '-'));
       const allMonthsCount = allData.length, ytdMonthsCount = ytd.length;
@@ -1892,6 +1962,7 @@
       }
       await loadFromFileOrLocal(initial);
       lastLoadedMonth = initial;
+      loadTheme();
       setupCollapsibles();
       renderAll();
       renderAverages();
@@ -2110,6 +2181,12 @@
           authPassword.focus();
         }
       });
+
+      if(themeToggle){
+        themeToggle.addEventListener('change', (e)=>{
+          saveTheme(e.target.checked);
+        });
+      }
 
       // initial split options
       buildSplitSliders(quickSplitSliders);
