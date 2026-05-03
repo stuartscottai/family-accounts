@@ -1,0 +1,2124 @@
+// ---------- Core selectors ----------
+    const monthEl = document.getElementById('month');
+    const modeBadge = document.getElementById('modeBadge');
+    const lastEditedEl = document.getElementById('lastEdited');
+
+    const personNameEl = document.getElementById('personName');
+    const addPersonBtn = document.getElementById('addPersonBtn');
+    const peopleChips = document.getElementById('peopleChips');
+
+    const categoryNameEl = document.getElementById('categoryName');
+    const addCategoryBtn = document.getElementById('addCategoryBtn');
+    const categoriesChips = document.getElementById('categoriesChips');
+
+    const modeQuickBtn = document.getElementById('modeQuick');
+    const modeBatchBtn = document.getElementById('modeBatch');
+    const quickPanel = document.getElementById('quickPanel');
+    const batchPanel = document.getElementById('batchPanel');
+
+    const quickPerson = document.getElementById('quickPerson');
+    const quickCategory = document.getElementById('quickCategory');
+    const quickSplitSliders = document.getElementById('quickSplitSliders');
+    const quickAmounts = document.getElementById('quickAmounts');
+    const addQuickBtn = document.getElementById('addQuickBtn');
+    const clearQuickBtn = document.getElementById('clearQuickBtn');
+
+    const batchPerson = document.getElementById('batchPerson');
+    const batchSplitSliders = document.getElementById('batchSplitSliders');
+    const batchRows = document.getElementById('batchRows');
+    const saveBatchBtn = document.getElementById('saveBatchBtn');
+
+    const expensesEmpty = document.getElementById('expensesEmpty');
+    const expensesTable = document.getElementById('expensesTable');
+    const expensesBody = document.getElementById('expensesBody');
+    const expensePayerTabs = document.getElementById('expensePayerTabs');
+    const duplicateReview = document.getElementById('duplicateReview');
+    const totalCell = document.getElementById('totalCell');
+    const addExpensesMonthlyTotal = document.getElementById('addExpensesMonthlyTotal');
+
+    const totalsPeople = document.getElementById('totalsPeople');
+    const totalsCategories = document.getElementById('totalsCategories');
+    const settlements = document.getElementById('settlements');
+
+    const clearMonthBtn = document.getElementById('clearMonthBtn');
+    const checkDuplicatesBtn = document.getElementById('checkDuplicatesBtn');
+
+    // Analysis
+    const analysisView = document.getElementById('analysisView');
+    const analysisCompareA = document.getElementById('analysisCompareA');
+    const analysisCompareB = document.getElementById('analysisCompareB');
+    const analysisSummary = document.getElementById('analysisSummary');
+    const analysisTable = document.getElementById('analysisTable');
+
+    // Auth selectors
+    const authEmail = document.getElementById('authEmail');
+    const authPassword = document.getElementById('authPassword');
+    const signInBtn = document.getElementById('signInBtn');
+    const signUpBtn = document.getElementById('signUpBtn');
+    const signOutBtn = document.getElementById('signOutBtn');
+    const forgotPasswordBtn = document.getElementById('forgotPasswordBtn');
+    const authStatus = document.getElementById('authStatus');
+    const authMessage = document.getElementById('authMessage');
+    const themeToggle = document.getElementById('themeToggle');
+
+    // ---------- App state ----------
+    let data = null; // current month data (only expenses and lastEdited)
+    let fileData = { people: [], categories: [], months: {} }; // Global people/categories + months
+    let saveDebounce = null;
+    let lastLoadedMonth = null;
+    let activeMonth = null;
+    let activeExpensePayerFilter = 'all';
+    let duplicateReviewState = null;
+    let supabaseClient = null;
+    let currentUser = null;
+    let currentSession = null;
+
+    // ---------- Supabase config ----------
+    //
+    // SETUP INSTRUCTIONS:
+    // 1. Go to https://supabase.com and create a free account
+    // 2. Create a new project (choose a region close to you)
+    // 3. Once created, go to Project Settings > API
+    // 4. Copy the "Project URL" and replace SUPABASE_URL below
+    // 5. Copy the "anon public" key and replace SUPABASE_ANON_KEY below
+    // 6. Go to SQL Editor and run this SQL to create the required table:
+    //
+    //    CREATE TABLE family_account_data (
+    //      user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+    //      data JSONB NOT NULL DEFAULT '{"months": {}}'::jsonb,
+    //      updated_at TIMESTAMPTZ DEFAULT NOW()
+    //    );
+    //
+    //    -- Enable Row Level Security
+    //    ALTER TABLE family_account_data ENABLE ROW LEVEL SECURITY;
+    //
+    //    -- Policy: Users can only access their own data
+    //    CREATE POLICY "Users can manage their own data"
+    //      ON family_account_data
+    //      FOR ALL
+    //      USING (auth.uid() = user_id)
+    //      WITH CHECK (auth.uid() = user_id);
+    //
+    // 7. Go to Authentication > Settings and configure:
+    //    - Enable "Email confirmations" (recommended)
+    //    - Set "Site URL" to your app's URL
+    //    - Configure email templates if desired
+    //
+    const SUPABASE_URL = 'https://huxaxrxoacmvtdmxkpsr.supabase.co';
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh1eGF4cnhvYWNtdnRkbXhrcHNyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY0MTc0OTEsImV4cCI6MjA4MTk5MzQ5MX0.HsG-Q20d3uT5kldXDeJFt6aJmXfxX_S7XWCj9iovRnw';
+
+    // ---------- Utilities ----------
+    function thisMonthValue(){
+      const d = new Date();
+      const m = String(d.getMonth()+1).padStart(2,'0');
+      return `${d.getFullYear()}-${m}`;
+    }
+    function keyFor(month){ return `famacct:${month}` }
+    function defaultData(){
+      return {expenses:[], lastEdited: new Date().toISOString()};
+    }
+    function normalizeMonthKey(month){
+      const raw = String(month || '').trim();
+      const match = /^(\d{4})-(\d{1,2})(?:-(\d{1,2}))?$/.exec(raw);
+      if(match){
+        return `${match[1]}-${match[2].padStart(2,'0')}`;
+      }
+      return raw;
+    }
+    function normalizeMonthData(raw){
+      let payload = raw;
+      if(typeof payload === 'string'){
+        try{
+          payload = JSON.parse(payload);
+        }catch{
+          payload = {};
+        }
+      }
+      if(payload && typeof payload === 'object' && payload.data && typeof payload.data === 'object'){
+        if(Array.isArray(payload.data.expenses)){
+          payload = payload.data;
+        }
+      }
+      const safe = (payload && typeof payload === 'object') ? { ...payload } : {};
+      safe.expenses = Array.isArray(safe.expenses) ? safe.expenses : [];
+      if(!safe.lastEdited){ safe.lastEdited = new Date().toISOString(); }
+      return safe;
+    }
+    function hasExpenses(monthData){
+      return Array.isArray(monthData?.expenses) && monthData.expenses.length > 0;
+    }
+    function shouldReplaceMonth(existing, incoming){
+      if(!existing) return true;
+      if(!incoming) return false;
+      return !hasExpenses(existing) && hasExpenses(incoming);
+    }
+    function isNewerMonthData(localData, remoteData){
+      if(!localData) return false;
+      if(!remoteData) return true;
+      const localTime = Date.parse(localData.lastEdited || '') || 0;
+      const remoteTime = Date.parse(remoteData.lastEdited || '') || 0;
+      if(localTime && remoteTime && localTime > remoteTime) return true;
+      const localCount = (localData.expenses || []).length;
+      const remoteCount = (remoteData.expenses || []).length;
+      return localCount > remoteCount;
+    }
+    function getLocalMonthData(monthKey){
+      const raw = localStorage.getItem(keyFor(normalizeMonthKey(monthKey)));
+      if(!raw) return null;
+      try{
+        const parsed = JSON.parse(raw);
+        return normalizeMonthData(parsed);
+      }catch{
+        return null;
+      }
+    }
+
+    function findMonthKeyInMap(monthKey){
+      const normalized = normalizeMonthKey(monthKey);
+      const months = fileData?.months || {};
+      if(months[normalized]) return normalized;
+      const keys = Object.keys(months);
+      const match = keys.find(k => normalizeMonthKey(k) === normalized);
+      return match || normalized;
+    }
+    async function ensureFreshSession(){
+      if(!supabaseClient) return false;
+      if(currentSession?.refresh_token){
+        try{
+          const { data, error } = await supabaseClient.auth.refreshSession({ refresh_token: currentSession.refresh_token });
+          if(!error && data?.session){
+            currentSession = data.session;
+            currentUser = data.session.user;
+            return true;
+          }
+        }catch(err){
+          console.warn('Failed to refresh session', err);
+        }
+      }
+      await refreshSession();
+      return !!currentSession?.access_token;
+    }
+
+    async function getAuthHeaders(){
+      if(!currentSession?.access_token && supabaseClient){
+        const { data: sessionData } = await supabaseClient.auth.getSession();
+        if(sessionData?.session){
+          currentSession = sessionData.session;
+          currentUser = sessionData.session.user;
+        }
+      }
+      if(!currentSession?.access_token) return null;
+      return {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${currentSession.access_token}`,
+        Accept: 'application/json'
+      };
+    }
+    async function fetchJson(url, options, retryAuth = true){
+      const res = await fetch(url, options);
+      if(res.status === 401 && retryAuth){
+        const refreshed = await ensureFreshSession();
+        if(refreshed){
+          return await fetchJson(url, options, false);
+        }
+      }
+      if(!res.ok){
+        const text = await res.text();
+        throw new Error(`HTTP ${res.status}: ${text}`);
+      }
+      const text = await res.text();
+      if(!text){
+        return null;
+      }
+      try{
+        return JSON.parse(text);
+      }catch(err){
+        throw new Error(`Invalid JSON response: ${text}`);
+      }
+    }
+    async function fetchMonthsRows(){
+      const headers = await getAuthHeaders();
+      if(!headers || !currentUser) return [];
+      const url = `${SUPABASE_URL}/rest/v1/family_account_months?select=month,data&user_id=eq.${encodeURIComponent(currentUser.id)}`;
+      try{
+        return await fetchJson(url, { headers });
+      }catch(err){
+        console.warn('Failed to fetch month rows', err);
+        return [];
+      }
+    }
+    async function fetchMonthRow(month){
+      const headers = await getAuthHeaders();
+      if(!headers || !currentUser) return null;
+      const key = normalizeMonthKey(month);
+      const url = `${SUPABASE_URL}/rest/v1/family_account_months?select=data&user_id=eq.${encodeURIComponent(currentUser.id)}&month=eq.${encodeURIComponent(key)}&limit=1`;
+      try{
+        const rows = await fetchJson(url, { headers });
+        if(Array.isArray(rows) && rows.length && rows[0]?.data){
+          return rows[0].data;
+        }
+      }catch(err){
+        console.warn('Failed to fetch month row', err);
+      }
+      return null;
+    }
+    async function upsertMonthRow(month, monthData){
+      const headers = await getAuthHeaders();
+      if(!headers || !currentUser) return;
+      const key = normalizeMonthKey(month);
+      const url = `${SUPABASE_URL}/rest/v1/family_account_months?on_conflict=user_id,month`;
+      const body = JSON.stringify([{
+        user_id: currentUser.id,
+        month: key,
+        data: monthData
+      }]);
+      try{
+        await fetchJson(url, {
+          method: 'POST',
+          headers: {
+            ...headers,
+            'Content-Type': 'application/json',
+            Prefer: 'resolution=merge-duplicates,return=minimal'
+          },
+          body
+        });
+      }catch(err){
+        console.warn('Failed to upsert month row', err);
+      }
+    }
+    function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
+    function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
+    function debounceSave(){ clearTimeout(saveDebounce); saveDebounce = setTimeout(()=>persist(), 400); }
+    function withTimeout(promise, ms, label){
+      let timeoutId;
+      const timeout = new Promise((_, reject)=>{
+        timeoutId = setTimeout(()=>{
+          const message = label ? `${label} timed out` : 'Operation timed out';
+          reject(new Error(message));
+        }, ms);
+      });
+      return Promise.race([promise, timeout]).finally(()=> clearTimeout(timeoutId));
+    }
+    function setModeBadge(){
+      if(currentUser){
+        modeBadge.textContent = `Signed in: ${currentUser.email}`;
+        return;
+      }
+      modeBadge.textContent = 'Local storage';
+    }
+    function formatUK(iso){
+      if(!iso) return '—';
+      const d = new Date(iso);
+      const dd = String(d.getDate()).padStart(2,'0');
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const yyyy = d.getFullYear();
+      const HH = String(d.getHours()).padStart(2,'0');
+      const min = String(d.getMinutes()).padStart(2,'0');
+      return `${dd}/${mm}/${yyyy} ${HH}:${min}`;
+    }
+    function setLastEditedNow(){ if(data){ data.lastEdited = new Date().toISOString(); renderLastEdited(); } }
+    function renderLastEdited(){ lastEditedEl.textContent = formatUK(data?.lastEdited); }
+
+    function applyTheme(mode){
+      const isDark = mode === 'dark';
+      document.body.classList.toggle('dark', isDark);
+      if(themeToggle){ themeToggle.checked = isDark; }
+    }
+    function loadTheme(){
+      const stored = localStorage.getItem('famacct:theme');
+      applyTheme(stored === 'dark' ? 'dark' : 'light');
+    }
+    function saveTheme(isDark){
+      localStorage.setItem('famacct:theme', isDark ? 'dark' : 'light');
+      applyTheme(isDark ? 'dark' : 'light');
+    }
+
+    // ---------- Auth utilities ----------
+    function showAuthMessage(message, type = 'info'){
+      // type: 'success', 'error', 'info'
+      authMessage.textContent = message;
+      authMessage.style.display = 'block';
+      if(type === 'success'){
+        authMessage.style.background = '#ecfdf5';
+        authMessage.style.color = '#065f46';
+        authMessage.style.border = '1px solid #6ee7b7';
+      } else if(type === 'error'){
+        authMessage.style.background = '#fef2f2';
+        authMessage.style.color = '#7f1d1d';
+        authMessage.style.border = '1px solid #fca5a5';
+      } else {
+        authMessage.style.background = '#eff6ff';
+        authMessage.style.color = '#1e3a8a';
+        authMessage.style.border = '1px solid #bfdbfe';
+      }
+      // Auto-hide after 8 seconds for success/info messages
+      if(type !== 'error'){
+        setTimeout(() => { authMessage.style.display = 'none'; }, 8000);
+      }
+    }
+    function hideAuthMessage(){ authMessage.style.display = 'none'; }
+    function validateEmail(email){
+      const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      return re.test(email);
+    }
+    function validatePassword(password){
+      return password && password.length >= 6;
+    }
+    function setButtonLoading(button, isLoading){
+      if(isLoading){
+        button.disabled = true;
+        button.dataset.originalText = button.textContent;
+        button.textContent = '⏳ Loading...';
+      } else {
+        button.disabled = false;
+        if(button.dataset.originalText){
+          button.textContent = button.dataset.originalText;
+          delete button.dataset.originalText;
+        }
+      }
+    }
+
+    // ---------- Collapsible cards ----------
+    const COLLAPSE_KEY = 'famacct:collapsed';
+    function loadCollapsed(){ try{ return JSON.parse(localStorage.getItem(COLLAPSE_KEY)||'{}'); }catch{return {}}; }
+    function saveCollapsed(obj){ try{ localStorage.setItem(COLLAPSE_KEY, JSON.stringify(obj)); }catch{} }
+    function setupCollapsibles(){
+      const state = loadCollapsed();
+      document.querySelectorAll('.card[data-section]').forEach(card=>{
+        const key = card.getAttribute('data-section');
+        const header = card.querySelector('.card-header');
+        const content = card.querySelector('.card-content');
+        const collapsed = !!state[key];
+        if(collapsed){ card.classList.add('collapsed'); content.style.display = 'none'; }
+        header.addEventListener('click', (e)=>{
+          if(e.target.closest('button')) return; // don’t collapse when clicking a button inside header
+          const now = card.classList.toggle('collapsed');
+          content.style.display = now ? 'none' : 'block';
+          const st = loadCollapsed(); st[key] = now ? 1 : 0; saveCollapsed(st);
+        });
+      });
+    }
+
+    // ---------- Storage: Local ----------
+    function localLoadMonth(month){
+      const raw = localStorage.getItem(keyFor(month));
+      if(raw){
+        try{
+          const parsed = JSON.parse(raw);
+          // Migrate old format: extract people/categories if they exist
+          if(parsed.people || parsed.categories){
+            // Merge into global lists
+            if(parsed.people){
+              fileData.people = Array.from(new Set([...(fileData.people||[]), ...(parsed.people||[])]));
+            }
+            if(parsed.categories){
+              fileData.categories = Array.from(new Set([...(fileData.categories||[]), ...(parsed.categories||[])]));
+            }
+            // Save migrated data
+            saveGlobalToLocal();
+          }
+          // Only keep expenses and lastEdited for month data
+          data = {
+            expenses: parsed.expenses || [],
+            lastEdited: parsed.lastEdited || new Date().toISOString()
+          };
+        }catch{
+          data = defaultData();
+        }
+        if(!data.lastEdited){ data.lastEdited = new Date().toISOString(); }
+      } else {
+        data = defaultData();
+        localStorage.setItem(keyFor(month), JSON.stringify(data));
+      }
+      activeMonth = normalizeMonthKey(month);
+    }
+    function localSaveCurrent(monthKey, payload){
+      // Only save expenses and lastEdited for each month
+      const key = keyFor(monthKey || monthEl.value);
+      localStorage.setItem(key, JSON.stringify(payload || data));
+    }
+    function saveGlobalToLocal(){
+      // Save global people and categories
+      try{
+        localStorage.setItem('famacct:global', JSON.stringify({
+          people: fileData.people || [],
+          categories: fileData.categories || []
+        }));
+      }catch(e){
+        console.error('Failed to save global data', e);
+      }
+    }
+    function loadGlobalFromLocal(){
+      // Load global people and categories
+      try{
+        const raw = localStorage.getItem('famacct:global');
+        if(raw){
+          const global = JSON.parse(raw);
+          fileData.people = global.people || [];
+          fileData.categories = global.categories || [];
+        } else {
+          // No global data exists yet - migrate from all saved months
+          console.log('Migrating people and categories from all saved months...');
+          const allPeople = new Set();
+          const allCategories = new Set();
+
+          // Scan all saved months and extract people/categories
+          for(let i=0; i<localStorage.length; i++){
+            const key = localStorage.key(i);
+            if(key && key.startsWith('famacct:') && key !== 'famacct:global' && key !== 'famacct:collapsed'){
+              try{
+                const monthData = JSON.parse(localStorage.getItem(key));
+                if(monthData.people && Array.isArray(monthData.people)){
+                  monthData.people.forEach(p => allPeople.add(String(p).trim()));
+                }
+                if(monthData.categories && Array.isArray(monthData.categories)){
+                  monthData.categories.forEach(c => allCategories.add(String(c).trim()));
+                }
+              }catch(e){
+                console.error('Failed to parse month data for migration:', key, e);
+              }
+            }
+          }
+
+          fileData.people = Array.from(allPeople).filter(Boolean);
+          fileData.categories = Array.from(allCategories).filter(Boolean);
+
+          // Save the migrated global data
+          if(fileData.people.length > 0 || fileData.categories.length > 0){
+            console.log('Migrated', fileData.people.length, 'people and', fileData.categories.length, 'categories');
+            saveGlobalToLocal();
+          }
+        }
+      }catch(e){
+        console.error('Failed to load global data', e);
+      }
+    }
+    function listSavedMonthsLocal(){
+      const months = [];
+      for(let i=0;i<localStorage.length;i++){
+        const k = localStorage.key(i);
+        if(k && k.startsWith('famacct:')) months.push(k.split(':')[1]);
+      }
+      months.sort((a,b)=> a<b?1:(a>b?-1:0));
+      return months;
+    }
+
+    function listSavedMonthsRemote(){
+      const months = Object.keys(fileData.months||{});
+      const seen = new Set();
+      const normalized = [];
+      for(const m of months){
+        const key = normalizeMonthKey(m);
+        if(seen.has(key)) continue;
+        seen.add(key);
+        normalized.push(key);
+      }
+      normalized.sort((a,b)=> a<b?1:(a>b?-1:0));
+      return normalized;
+    }
+
+    // ---------- Shared load/save ----------
+    function monthExists(month){
+      const normalizedMonth = normalizeMonthKey(month);
+      if(currentUser){
+        if(fileData.months){
+          const mapKey = findMonthKeyInMap(normalizedMonth);
+          if(fileData.months[mapKey]) return true;
+        }
+      }
+      return localStorage.getItem(keyFor(normalizedMonth)) != null;
+    }
+
+    async function loadFromFileOrLocal(month){
+      const normalizedMonth = normalizeMonthKey(month);
+      activeMonth = normalizedMonth;
+      if(currentUser){
+        const mapKey = findMonthKeyInMap(normalizedMonth);
+        const existing = (fileData.months && fileData.months[mapKey]) || null;
+        if(existing){
+          const normalizedExisting = normalizeMonthData(existing);
+          if(!hasExpenses(normalizedExisting)){
+            const remoteData = await loadRemoteMonth(normalizedMonth);
+            const normalizedRemote = remoteData ? normalizeMonthData(remoteData) : null;
+            if(shouldReplaceMonth(normalizedExisting, normalizedRemote)){
+              data = normalizedRemote;
+              fileData.months[normalizedMonth] = data;
+              return;
+            }
+          }
+          data = normalizedExisting;
+          fileData.months[normalizedMonth] = data;
+          return;
+        }
+        const remoteData = await loadRemoteMonth(normalizedMonth);
+        if(remoteData){
+          data = normalizeMonthData(remoteData);
+          fileData.months[normalizedMonth] = data;
+          return;
+        }
+        const localRaw = localStorage.getItem(keyFor(normalizedMonth));
+        if(localRaw){
+          try{
+            const parsed = JSON.parse(localRaw);
+            // Only keep expenses and lastEdited
+            data = {
+              expenses: parsed.expenses || [],
+              lastEdited: parsed.lastEdited || new Date().toISOString()
+            };
+          }catch{
+            data = defaultData();
+          }
+        } else {
+          data = defaultData();
+        }
+      } else {
+        localLoadMonth(normalizedMonth);
+      }
+    }
+
+    async function persist(){
+      const targetMonth = activeMonth || monthEl.value;
+      const normalizedMonth = normalizeMonthKey(targetMonth);
+      const snapshot = JSON.parse(JSON.stringify(data || defaultData()));
+      try{ localSaveCurrent(normalizedMonth, snapshot); }catch{}
+      data = snapshot;
+      if(currentUser){
+        fileData.months[normalizedMonth] = snapshot;
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+        await saveRemoteMonth(normalizedMonth, snapshot);
+      } else {
+        saveGlobalToLocal();
+      }
+      renderAverages();
+    }
+
+    // ---------- Helpers ----------
+    function uniqueList(arr){ return Array.from(new Set((arr||[]).map(s=>String(s).trim()).filter(Boolean))); }
+
+    // ---------- Split helpers ----------
+    function buildSplitSliders(containerEl){
+      const ppl = fileData.people || [];
+      containerEl.innerHTML='';
+      if(ppl.length === 0) return;
+
+      if(ppl.length === 1){
+        const row = document.createElement('div');
+        row.className = 'split-single';
+        row.dataset.person = ppl[0];
+        row.textContent = `${ppl[0]} 100%`;
+        containerEl.appendChild(row);
+        return;
+      }
+
+      if(ppl.length === 2){
+        const [leftPerson, rightPerson] = ppl;
+        const row = document.createElement('div');
+        row.className = 'two-person-split';
+
+        const leftLabel = document.createElement('span');
+        leftLabel.className = 'split-end split-left';
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0';
+        slider.max = '100';
+        slider.step = '5';
+        slider.value = '50';
+        slider.className = 'split-slider two-person-split-slider';
+        slider.dataset.leftPerson = leftPerson;
+        slider.dataset.rightPerson = rightPerson;
+
+        const rightLabel = document.createElement('span');
+        rightLabel.className = 'split-end split-right';
+
+        const updateTwoPersonLabels = () => {
+          const leftValue = parseInt(slider.value) || 0;
+          leftLabel.textContent = `${leftPerson} ${leftValue}%`;
+          rightLabel.textContent = `${100 - leftValue}% ${rightPerson}`;
+        };
+
+        slider.addEventListener('input', updateTwoPersonLabels);
+        updateTwoPersonLabels();
+
+        row.appendChild(leftLabel);
+        row.appendChild(slider);
+        row.appendChild(rightLabel);
+        containerEl.appendChild(row);
+        return;
+      }
+
+      // Create a slider for each person
+      ppl.forEach((person, index) => {
+        const row = document.createElement('div');
+        row.className = 'split-slider-row';
+
+        const label = document.createElement('label');
+        label.textContent = person;
+
+        const slider = document.createElement('input');
+        slider.type = 'range';
+        slider.min = '0';
+        slider.max = '100';
+        slider.step = '5';
+        slider.value = Math.floor(100 / ppl.length);
+        slider.dataset.person = person;
+        slider.className = 'split-slider';
+
+        const valueDisplay = document.createElement('span');
+        valueDisplay.className = 'split-value';
+        valueDisplay.textContent = slider.value + '%';
+
+        // Update display when slider changes
+        slider.addEventListener('input', (e) => {
+          valueDisplay.textContent = e.target.value + '%';
+          // Auto-adjust other sliders to maintain 100% total
+          autoAdjustSliders(containerEl, person);
+        });
+
+        row.appendChild(label);
+        row.appendChild(slider);
+        row.appendChild(valueDisplay);
+        containerEl.appendChild(row);
+      });
+    }
+
+    function autoAdjustSliders(containerEl, changedPerson){
+      const sliders = containerEl.querySelectorAll('.split-slider');
+      const values = {};
+      let total = 0;
+
+      // Get all current values
+      sliders.forEach(slider => {
+        const val = parseInt(slider.value);
+        values[slider.dataset.person] = val;
+        total += val;
+      });
+
+      // If total is not 100, adjust other sliders proportionally
+      if(total !== 100 && sliders.length > 1){
+        const diff = total - 100;
+        const others = Array.from(sliders).filter(s => s.dataset.person !== changedPerson);
+
+        if(others.length > 0){
+          // Distribute the difference among other sliders
+          const adjustment = Math.floor(diff / others.length);
+          let remaining = diff;
+
+          others.forEach((slider, index) => {
+            const currentVal = parseInt(slider.value);
+            const adj = (index === others.length - 1) ? remaining : adjustment;
+            const newVal = Math.max(0, Math.min(100, currentVal - adj));
+            slider.value = newVal;
+            slider.nextElementSibling.textContent = newVal + '%';
+            remaining -= adj;
+          });
+        }
+      }
+    }
+
+    function getSplitsFromSliders(containerEl){
+      const splits = {};
+      const twoPersonSlider = containerEl.querySelector('.two-person-split-slider');
+      if(twoPersonSlider){
+        const leftValue = parseInt(twoPersonSlider.value) || 0;
+        splits[twoPersonSlider.dataset.leftPerson] = leftValue;
+        splits[twoPersonSlider.dataset.rightPerson] = 100 - leftValue;
+        return splits;
+      }
+      const singlePerson = containerEl.querySelector('.split-single');
+      if(singlePerson?.dataset.person){
+        splits[singlePerson.dataset.person] = 100;
+        return splits;
+      }
+      const sliders = containerEl.querySelectorAll('.split-slider');
+      sliders.forEach(slider => {
+        splits[slider.dataset.person] = parseInt(slider.value);
+      });
+      return splits;
+    }
+    function splitsToLabel(splits){
+      const parts = Object.entries(splits||{}).filter(([_,v])=>v>0).map(([k,v])=>`${k} ${v}%`);
+      return parts.join(' / ') || '—';
+    }
+
+    // ---------- Computations & Rendering ----------
+    // CHANGED: computeTotals now shows what each person ACTUALLY PAID (sum by payer), not split shares
+    function computeTotals(){
+      const perPerson = Object.fromEntries((fileData.people||[]).map(p=>[p,0]));
+      const perCategory = Object.fromEntries((fileData.categories||[]).map(c=>[c,0]));
+      let grand=0;
+      for(const e of (data.expenses||[])){
+        const amount = +e.amount || 0;
+        const payer = e.payer || e.person || '';
+        if(!(payer in perPerson)) perPerson[payer]=0;
+        perPerson[payer] = round2((perPerson[payer]||0) + amount);
+        if(!(e.category in perCategory)) perCategory[e.category]=0;
+        perCategory[e.category]+= amount;
+        grand+= amount;
+      }
+      perPerson.__total = round2(grand);
+      return {perPerson, perCategory};
+    }
+
+    // CHANGED: computeSettlements uses PAID vs OWED (OWED from splits), not equal-share-of-grand-total
+    function computeSettlements(){
+      const people = (fileData.people||[]);
+      const paid = Object.fromEntries(people.map(p=>[p,0]));
+      const owed = Object.fromEntries(people.map(p=>[p,0]));
+      let grand = 0;
+
+      for(const e of (data.expenses||[])){
+        const amount = +e.amount || 0;
+        const payer = e.payer || e.person || '';
+        grand += amount;
+
+        // what was actually paid
+        if(!(payer in paid)) paid[payer]=0;
+        paid[payer] = round2((paid[payer]||0) + amount);
+
+        // liability owed according to splits
+        const splits = e.splits || {[payer]:100};
+        const entries = Object.entries(splits);
+        let allocated = 0;
+        entries.forEach(([p, pct], idx) => {
+          if(!(p in owed)) owed[p]=0;
+          let part = round2(amount * ((+pct || 0)/100));
+          allocated = round2(allocated + part);
+          if(idx === entries.length - 1){
+            const remainder = round2(amount - allocated);
+            part = round2(part + remainder);
+          }
+          owed[p] = round2((owed[p]||0) + part);
+        });
+      }
+
+      const balances = people.map(p=>({ person:p, balance: round2((paid[p]||0) - (owed[p]||0)) }));
+
+      // greedy settlement: debtors (negative) pay creditors (positive)
+      const creditors = balances.filter(b=>b.balance>0).map(b=>({...b})).sort((a,b)=>b.balance-a.balance);
+      const debtors = balances.filter(b=>b.balance<0).map(b=>({...b})).sort((a,b)=>a.balance-b.balance);
+      const transfers = [];
+      let ci=0, di=0;
+      while(ci<creditors.length && di<debtors.length){
+        const c = creditors[ci], d = debtors[di];
+        const amt = round2(Math.min(c.balance, -d.balance));
+        if(amt>0){
+          transfers.push({from:d.person,to:c.person,amount:amt});
+          c.balance = round2(c.balance - amt);
+          d.balance = round2(d.balance + amt);
+        }
+        if(c.balance<=0.0001) ci++;
+        if(d.balance>=-0.0001) di++;
+      }
+      // Share kept ONLY for existing UI display; not used in balance math
+      const n = people.length || 1;
+      const share = round2((grand||0)/n);
+      return {share, balances, transfers};
+    }
+
+    function renderPeopleCats(){
+      peopleChips.innerHTML = '';
+      for(const p of (fileData.people||[])){
+        const c = document.createElement('span');
+        c.className='chip';
+        c.innerHTML = '<span>'+p+'</span><span class="x" title="Remove">✖</span>';
+        c.querySelector('.x').addEventListener('click', async ()=>{ if(confirm('Remove '+p+' and their expenses from ALL months?')) { await removePerson(p); }});
+        peopleChips.appendChild(c);
+      }
+      categoriesChips.innerHTML = '';
+      for(const cName of (fileData.categories||[])){
+        const c = document.createElement('span');
+        c.className='chip';
+        const label = document.createElement('span');
+        label.textContent = cName;
+        const editBtn = document.createElement('button');
+        editBtn.className = 'chip-edit';
+        editBtn.title = 'Rename category';
+        editBtn.type = 'button';
+        editBtn.textContent = 'Edit';
+        const removeBtn = document.createElement('span');
+        removeBtn.className = 'x';
+        removeBtn.title = 'Remove';
+        removeBtn.textContent = '✖';
+        editBtn.addEventListener('click', async ()=>{ await renameCategoryPrompt(cName); });
+        removeBtn.addEventListener('click', async ()=>{ if(confirm('Remove category \"'+cName+'\" from ALL months?')) { await removeCategory(cName); }});
+        c.appendChild(label);
+        c.appendChild(editBtn);
+        c.appendChild(removeBtn);
+        categoriesChips.appendChild(c);
+      }
+      fillSelect(quickPerson, (fileData.people||[]));
+      fillSelect(quickCategory, (fileData.categories||[]));
+      fillSelect(batchPerson, (fileData.people||[]));
+      buildSplitSliders(quickSplitSliders);
+      buildSplitSliders(batchSplitSliders);
+      [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, (fileData.categories||[])));
+    }
+    function renderExpenses(){
+      const monthExpenses = data.expenses || [];
+      const payerOptions = uniqueList([
+        ...(fileData.people || []),
+        ...monthExpenses.map(e => e.payer || e.person || '').filter(Boolean)
+      ]);
+      if(activeExpensePayerFilter !== 'all' && !payerOptions.includes(activeExpensePayerFilter)){
+        activeExpensePayerFilter = 'all';
+      }
+      if(expensePayerTabs){
+        expensePayerTabs.innerHTML = '';
+        const tabs = [{value:'all', label:'All'}, ...payerOptions.map(person => ({value:person, label:person}))];
+        for(const tab of tabs){
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = tab.label;
+          button.className = tab.value === activeExpensePayerFilter ? 'active' : '';
+          button.addEventListener('click', () => {
+            activeExpensePayerFilter = tab.value;
+            renderExpenses();
+          });
+          expensePayerTabs.appendChild(button);
+        }
+      }
+      const visibleExpenses = activeExpensePayerFilter === 'all'
+        ? monthExpenses
+        : monthExpenses.filter(e => (e.payer || e.person || '') === activeExpensePayerFilter);
+      const headRow = expensesTable.querySelector('thead tr');
+      const footRow = expensesTable.querySelector('tfoot tr');
+
+      if(headRow){
+        headRow.innerHTML = '';
+        ['#', 'Payer', 'Category', 'Note', 'Amount', 'Split', ''].forEach(label => {
+          const th = document.createElement('th');
+          th.textContent = label;
+          headRow.appendChild(th);
+        });
+      }
+
+      if(!monthExpenses.length){
+        expensesEmpty.style.display='block';
+        expensesTable.style.display='none';
+        const currentTotalCell = document.getElementById('totalCell');
+        if(currentTotalCell) currentTotalCell.textContent = euro(0);
+        if(addExpensesMonthlyTotal) addExpensesMonthlyTotal.textContent = euro(0);
+        expensesBody.innerHTML = '';
+        return;
+      }
+      expensesEmpty.style.display = visibleExpenses.length ? 'none' : 'block';
+      expensesEmpty.textContent = visibleExpenses.length ? 'No expenses yet.' : 'No expenses for this payer.';
+      expensesTable.style.display='table';
+      expensesBody.innerHTML = '';
+      let i=1, total=0;
+      for(const [idx,e] of monthExpenses.entries()){
+        const payer = e.payer || e.person || '';
+        if(activeExpensePayerFilter !== 'all' && payer !== activeExpensePayerFilter) continue;
+        const amount = +e.amount || 0;
+        total += amount;
+        const tr = document.createElement('tr');
+        const splitTxt = splitsToLabel(e.splits||{[payer]:100});
+        const cells = [i++, payer, e.category || '', e.note || '', euro(amount), splitTxt];
+        for(const cell of cells){
+          const td = document.createElement('td');
+          td.textContent = cell;
+          tr.appendChild(td);
+        }
+        const deleteCell = document.createElement('td');
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn ghost';
+        deleteBtn.title = 'Delete';
+        deleteBtn.dataset.i = String(idx);
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = '🗑️';
+        deleteBtn.addEventListener('click', async ()=>{ (data.expenses||[]).splice(idx,1); await save(); renderAll(); });
+        deleteCell.appendChild(deleteBtn);
+        tr.appendChild(deleteCell);
+        expensesBody.appendChild(tr);
+      }
+      if(footRow){
+        footRow.innerHTML = '';
+        const labelCell = document.createElement('td');
+        labelCell.colSpan = 4;
+        labelCell.textContent = 'Total';
+        footRow.appendChild(labelCell);
+        const allTotalCell = document.createElement('td');
+        allTotalCell.id = 'totalCell';
+        allTotalCell.textContent = euro(round2(total));
+        footRow.appendChild(allTotalCell);
+        footRow.appendChild(document.createElement('td'));
+        footRow.appendChild(document.createElement('td'));
+      }
+      const monthlyTotal = monthExpenses.reduce((sum, expense) => round2(sum + (+expense.amount || 0)), 0);
+      if(addExpensesMonthlyTotal) addExpensesMonthlyTotal.textContent = euro(round2(monthlyTotal));
+    }
+    function renderTotals(){
+      const {perPerson, perCategory} = computeTotals();
+      const total = perPerson.__total || 0;
+      let htmlP='';
+      if((fileData.people||[]).length){
+        htmlP += '<table><thead><tr><th>Person</th><th>Total paid this month</th></tr></thead><tbody>';
+        for(const p of (fileData.people||[])){
+          htmlP += '<tr><td>'+p+'</td><td>'+euro(round2(perPerson[p]||0))+'</td></tr>';
+        }
+        htmlP += '</tbody><tfoot><tr><td>All people</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
+      } else htmlP = '<div class="muted">Add some people to see totals.</div>';
+      totalsPeople.innerHTML = htmlP;
+
+      let htmlC='';
+      if((fileData.categories||[]).length){
+        htmlC += '<table><thead><tr><th>Category</th><th>Total</th></tr></thead><tbody>';
+        for(const c of (fileData.categories||[])){
+          htmlC += '<tr><td>'+c+'</td><td>'+euro(round2(perCategory[c]||0))+'</td></tr>';
+        }
+        htmlC += '</tbody><tfoot><tr><td>All categories</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
+      } else htmlC = '<div class="muted">Add some categories to see totals.</div>';
+      totalsCategories.innerHTML = htmlC;
+    }
+    function renderSettlements(){
+      const {share, balances, transfers} = computeSettlements();
+      if(!(fileData.people||[]).length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
+      let html = '<div class="row"><div>Equal share per person (based on splits): <strong>'+euro(share)+'</strong></div></div>';
+      html += '<table><thead><tr><th>Person</th><th>Balance (positive = others owe them, negative = they owe others)</th></tr></thead><tbody>';
+      for(const b of balances){
+        const cls = b.balance>=0? 'ok' : 'bad';
+        html += '<tr><td>'+b.person+'</td><td><span class="pill '+cls+'">'+(b.balance>=0?'+':'')+euro(b.balance)+'</span></td></tr>';
+      }
+      html += '</tbody></table>';
+      if(!transfers.length){ html += '<div class="muted">No transfers needed ✅</div>'; }
+      else{
+        html += '<div class="card-title" style="margin:8px 0">Suggested transfers</div>';
+        html += '<table><thead><tr><th>From</th><th>To</th><th>Amount</th></tr></thead><tbody>';
+        for(const t of transfers){ html += '<tr><td>'+t.from+'</td><td>'+t.to+'</td><td>'+euro(t.amount)+'</td></tr>'; }
+        html += '</tbody></table>';
+      }
+      settlements.innerHTML = html;
+    }
+    function renderAll(){
+      renderPeopleCats(); renderExpenses(); renderTotals(); renderSettlements(); renderLastEdited(); renderAverages();
+    }
+
+    function fillSelect(selectEl, items){
+      const currentValue = selectEl.value; // Preserve current selection
+      selectEl.innerHTML = '';
+      const opt = document.createElement('option'); opt.value=''; opt.textContent='— select —'; selectEl.appendChild(opt);
+      for(const it of (items||[])){ const o = document.createElement('option'); o.value=it; o.textContent=it; selectEl.appendChild(o); }
+      if(currentValue) selectEl.value = currentValue; // Restore selection if it still exists
+    }
+
+    function getAvailableYears(months){
+      const years = new Set();
+      for(const m of months){
+        const key = normalizeMonthKey(m);
+        if(key && key.includes('-')){
+          years.add(key.split('-')[0]);
+        }
+      }
+      return Array.from(years).sort((a,b)=> Number(b) - Number(a));
+    }
+
+    // Analysis across months (from local or file)
+    function listSavedMonths(){ return currentUser ? listSavedMonthsRemote() : listSavedMonthsLocal(); }
+    function getMonthData(m){
+      if(currentUser){
+        const mapKey = findMonthKeyInMap(m);
+        return fileData.months[mapKey] || defaultData(null);
+      }
+      const raw = localStorage.getItem(keyFor(m)); if(!raw) return defaultData(null);
+      try{ return JSON.parse(raw); }catch{return defaultData(null);} }
+    function monthLabel(monthKey){
+      const key = normalizeMonthKey(monthKey);
+      if(!/^\d{4}-\d{2}$/.test(key)) return key;
+      const [year, month] = key.split('-');
+      return new Date(Number(year), Number(month)-1, 1).toLocaleDateString('en-GB', { month:'short', year:'numeric' });
+    }
+    function summarizeExpenses(expenses){
+      const categoryTotals = {};
+      const payerTotals = {};
+      let total = 0;
+      for(const e of (expenses || [])){
+        const amount = +e.amount || 0;
+        total = round2(total + amount);
+        const category = e.category || 'Uncategorised';
+        const payer = e.payer || e.person || 'Unknown';
+        categoryTotals[category] = round2((categoryTotals[category] || 0) + amount);
+        payerTotals[payer] = round2((payerTotals[payer] || 0) + amount);
+      }
+      const count = (expenses || []).length;
+      return { total: round2(total), count, average: count ? round2(total / count) : 0, categoryTotals, payerTotals };
+    }
+    function getAnalysisMonthRows(){
+      return listSavedMonths()
+        .map(m => normalizeMonthKey(m))
+        .filter(m => /^\d{4}-\d{2}$/.test(m))
+        .filter((m, idx, arr) => arr.indexOf(m) === idx)
+        .sort()
+        .map(m => ({ month:m, data:getMonthData(m) }))
+        .filter(row => row.data && (row.data.expenses || []).length);
+    }
+    function sumMaps(maps){
+      const total = {};
+      for(const map of maps){
+        for(const [key, value] of Object.entries(map || {})){
+          total[key] = round2((total[key] || 0) + (+value || 0));
+        }
+      }
+      return total;
+    }
+    function tableFromMap(mapObj, leftHeader, rightHeader){
+      const keys = Object.keys(mapObj).sort((a,b)=> mapObj[b]-mapObj[a]); if(!keys.length) return '<div class="muted">No data yet.</div>';
+      let html = '<table><thead><tr><th>'+leftHeader+'</th><th>'+rightHeader+'</th></tr></thead><tbody>';
+      for(const k of keys){ html += '<tr><td>'+k+'</td><td>'+euro(mapObj[k])+'</td></tr>'; }
+      html += '</tbody></table>'; return html;
+    }
+    function tableFromRows(rows, headers){
+      if(!rows.length) return '<div class="muted">No data yet.</div>';
+      let html = '<table><thead><tr>'+headers.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>';
+      for(const row of rows){
+        html += '<tr>'+row.map(cell=>'<td>'+cell+'</td>').join('')+'</tr>';
+      }
+      html += '</tbody></table>';
+      return html;
+    }
+    function renderMetricCards(metrics){
+      analysisSummary.innerHTML = metrics.map(metric => (
+        '<div class="analysis-metric"><div class="muted">'+metric.label+'</div><div class="big">'+metric.value+'</div></div>'
+      )).join('');
+    }
+    function setCompareOptions(options){
+      const controls = document.querySelectorAll('.analysis-compare-control');
+      const isCompare = analysisView && (analysisView.value === 'compare-months' || analysisView.value === 'compare-years');
+      controls.forEach(control => { control.style.display = isCompare ? 'flex' : 'none'; });
+      if(!isCompare) return;
+      const previousA = analysisCompareA.value;
+      const previousB = analysisCompareB.value;
+      analysisCompareA.innerHTML = '';
+      analysisCompareB.innerHTML = '';
+      for(const option of options){
+        const a = document.createElement('option');
+        a.value = option.value;
+        a.textContent = option.label;
+        analysisCompareA.appendChild(a);
+        const b = document.createElement('option');
+        b.value = option.value;
+        b.textContent = option.label;
+        analysisCompareB.appendChild(b);
+      }
+      if(options.some(o => o.value === previousA)) analysisCompareA.value = previousA;
+      if(options.some(o => o.value === previousB)) analysisCompareB.value = previousB;
+      if(!analysisCompareA.value && options[0]) analysisCompareA.value = options[0].value;
+      if(!analysisCompareB.value && options[1]) analysisCompareB.value = options[1].value;
+      if(analysisCompareA.value === analysisCompareB.value && options.length > 1){
+        analysisCompareB.value = options.find(o => o.value !== analysisCompareA.value)?.value || analysisCompareB.value;
+      }
+    }
+    function renderAverages(){
+      if(!analysisView || !analysisSummary || !analysisTable) return;
+      const monthRows = getAnalysisMonthRows();
+      const years = getAvailableYears(monthRows.map(row => row.month));
+      const view = analysisView.value || 'month';
+      const allSummary = summarizeExpenses(monthRows.flatMap(row => row.data.expenses || []));
+      const selectedMonth = normalizeMonthKey(monthEl.value);
+      const currentMonth = monthRows.find(row => row.month === selectedMonth) || { month:selectedMonth, data:data || defaultData() };
+      const currentSummary = summarizeExpenses(currentMonth.data.expenses || []);
+
+      if(view !== 'compare-months' && view !== 'compare-years') setCompareOptions([]);
+
+      if(view === 'month'){
+        renderMetricCards([
+          { label: monthLabel(selectedMonth), value: euro(currentSummary.total) },
+          { label: 'Entries', value: String(currentSummary.count) },
+          { label: 'Average entry', value: euro(currentSummary.average) }
+        ]);
+        analysisTable.innerHTML = tableFromMap(currentSummary.categoryTotals, 'Category', 'Total');
+        return;
+      }
+
+      if(view === 'months'){
+        const rows = monthRows.slice().reverse().map(row => {
+          const summary = summarizeExpenses(row.data.expenses || []);
+          return [monthLabel(row.month), euro(summary.total), String(summary.count), euro(summary.average)];
+        });
+        renderMetricCards([
+          { label: 'All months total', value: euro(allSummary.total) },
+          { label: 'Months with data', value: String(monthRows.length) },
+          { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.total / monthRows.length) : 0) }
+        ]);
+        analysisTable.innerHTML = tableFromRows(rows, ['Month', 'Total', 'Entries', 'Avg entry']);
+        return;
+      }
+
+      const yearGroups = {};
+      for(const row of monthRows){
+        const year = row.month.split('-')[0];
+        if(!yearGroups[year]) yearGroups[year] = [];
+        yearGroups[year].push(row);
+      }
+
+      if(view === 'years'){
+        const rows = Object.keys(yearGroups).sort((a,b)=>Number(b)-Number(a)).map(year => {
+          const expenses = yearGroups[year].flatMap(row => row.data.expenses || []);
+          const summary = summarizeExpenses(expenses);
+          return [year, euro(summary.total), String(yearGroups[year].length), euro(yearGroups[year].length ? round2(summary.total / yearGroups[year].length) : 0)];
+        });
+        renderMetricCards([
+          { label: 'All years total', value: euro(allSummary.total) },
+          { label: 'Years with data', value: String(Object.keys(yearGroups).length) },
+          { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.total / monthRows.length) : 0) }
+        ]);
+        analysisTable.innerHTML = tableFromRows(rows, ['Year', 'Total', 'Months', 'Avg / month']);
+        return;
+      }
+
+      if(view === 'ytd'){
+        const currentYear = String(new Date().getFullYear());
+        const year = years.includes(currentYear) ? currentYear : (years[0] || currentYear);
+        const cutoffMonth = year === currentYear ? thisMonthValue() : `${year}-12`;
+        const ytdRows = monthRows.filter(row => row.month.startsWith(year + '-') && row.month <= cutoffMonth);
+        const summary = summarizeExpenses(ytdRows.flatMap(row => row.data.expenses || []));
+        renderMetricCards([
+          { label: year + ' total', value: euro(summary.total) },
+          { label: 'Months included', value: String(ytdRows.length) },
+          { label: 'Average per month', value: euro(ytdRows.length ? round2(summary.total / ytdRows.length) : 0) }
+        ]);
+        analysisTable.innerHTML = tableFromMap(summary.categoryTotals, 'Category', 'YTD total');
+        return;
+      }
+
+      if(view === 'averages'){
+        const categoryAverages = {};
+        const categoryTotals = sumMaps(monthRows.map(row => summarizeExpenses(row.data.expenses || []).categoryTotals));
+        for(const [category, total] of Object.entries(categoryTotals)){
+          categoryAverages[category] = monthRows.length ? round2(total / monthRows.length) : 0;
+        }
+        renderMetricCards([
+          { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.total / monthRows.length) : 0) },
+          { label: 'Average entry', value: euro(allSummary.average) },
+          { label: 'Entries analysed', value: String(allSummary.count) }
+        ]);
+        analysisTable.innerHTML = tableFromMap(categoryAverages, 'Category', 'Avg / month');
+        return;
+      }
+
+      if(view === 'compare-months'){
+        const options = monthRows.slice().reverse().map(row => ({ value:row.month, label:monthLabel(row.month) }));
+        setCompareOptions(options);
+        const a = monthRows.find(row => row.month === analysisCompareA.value);
+        const b = monthRows.find(row => row.month === analysisCompareB.value);
+        renderComparison(a?.data?.expenses || [], b?.data?.expenses || [], monthLabel(analysisCompareA.value), monthLabel(analysisCompareB.value));
+        return;
+      }
+
+      if(view === 'compare-years'){
+        const options = Object.keys(yearGroups).sort((a,b)=>Number(b)-Number(a)).map(year => ({ value:year, label:year }));
+        setCompareOptions(options);
+        const aExpenses = (yearGroups[analysisCompareA.value] || []).flatMap(row => row.data.expenses || []);
+        const bExpenses = (yearGroups[analysisCompareB.value] || []).flatMap(row => row.data.expenses || []);
+        renderComparison(aExpenses, bExpenses, analysisCompareA.value, analysisCompareB.value);
+      }
+    }
+    function renderComparison(aExpenses, bExpenses, aLabel, bLabel){
+      const a = summarizeExpenses(aExpenses);
+      const b = summarizeExpenses(bExpenses);
+      renderMetricCards([
+        { label: aLabel || 'First', value: euro(a.total) },
+        { label: bLabel || 'Second', value: euro(b.total) },
+        { label: 'Difference', value: euro(round2(a.total - b.total)) }
+      ]);
+      const categories = Array.from(new Set([...Object.keys(a.categoryTotals), ...Object.keys(b.categoryTotals)])).sort();
+      const rows = categories.map(category => {
+        const av = a.categoryTotals[category] || 0;
+        const bv = b.categoryTotals[category] || 0;
+        return [category, euro(av), euro(bv), euro(round2(av - bv))];
+      });
+      analysisTable.innerHTML = tableFromRows(rows, ['Category', aLabel || 'First', bLabel || 'Second', 'Difference']);
+    }
+
+    // ---------- Supabase ----------
+    function initSupabase(){
+      if(!window.supabase || !SUPABASE_URL || !SUPABASE_ANON_KEY){
+        console.warn('Supabase client not configured.');
+        return;
+      }
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    }
+
+    async function loadRemote(){
+      if(!supabaseClient || !currentUser) return;
+      let needsSave = false;
+      const { data: rows, error } = await supabaseClient
+        .from('family_account_data')
+        .select('data')
+        .eq('user_id', currentUser.id)
+        .limit(1);
+      if(error){
+        console.error(error);
+        return;
+      }
+      if(rows && rows.length){
+        fileData = rows[0].data || { people: [], categories: [], months: {} };
+      } else {
+        fileData = { people: [], categories: [], months: {} };
+        needsSave = true;
+      }
+
+      if(!fileData.people) fileData.people = [];
+      if(!fileData.categories) fileData.categories = [];
+      if(!fileData.months || typeof fileData.months !== 'object') fileData.months = {};
+
+      // Load legacy per-month rows if they exist and merge into months map.
+      const monthsRows = await fetchMonthsRows();
+      const monthsRowMap = {};
+      if(Array.isArray(monthsRows) && monthsRows.length){
+        for(const row of monthsRows){
+          const key = normalizeMonthKey(row?.month);
+          const incoming = row?.data ? normalizeMonthData(row.data) : null;
+          if(key && incoming){
+            monthsRowMap[key] = incoming;
+          }
+        }
+      }
+      for(const [key, incoming] of Object.entries(monthsRowMap)){
+        const existing = key ? fileData.months[key] : null;
+        if(key && incoming && shouldReplaceMonth(existing, incoming)){
+          fileData.months[key] = incoming;
+          needsSave = true;
+        }
+      }
+
+      // Backfill per-month rows from the global months map if they are missing/empty.
+      const backfillMonths = [];
+      for(const [rawKey, monthData] of Object.entries(fileData.months || {})){
+        const key = normalizeMonthKey(rawKey);
+        const normalized = normalizeMonthData(monthData);
+        const existingRow = monthsRowMap[key];
+        if(shouldReplaceMonth(existingRow, normalized)){
+          monthsRowMap[key] = normalized;
+          backfillMonths.push(key);
+        }
+        if(rawKey !== key){
+          fileData.months[key] = normalized;
+          needsSave = true;
+        }
+      }
+      for(const key of backfillMonths){
+        await saveRemoteMonth(key, monthsRowMap[key]);
+      }
+
+      // Local storage fallback: prefer newer local data if remote is stale.
+      const localMonths = listSavedMonthsLocal();
+      const localUpdates = [];
+      for(const localKey of localMonths){
+        const localData = getLocalMonthData(localKey);
+        if(!localData) continue;
+        const key = normalizeMonthKey(localKey);
+        const existing = fileData.months[key];
+        if(isNewerMonthData(localData, existing)){
+          fileData.months[key] = localData;
+          localUpdates.push(key);
+          needsSave = true;
+        }
+      }
+      for(const key of localUpdates){
+        await saveRemoteMonth(key, fileData.months[key]);
+      }
+
+      // Migrate people/categories from month records if missing.
+      if(fileData.people.length === 0 && fileData.categories.length === 0){
+        const allPeople = new Set();
+        const allCategories = new Set();
+        for(const monthData of Object.values(fileData.months)){
+          if(monthData && typeof monthData === 'object'){
+            if(Array.isArray(monthData.people)){
+              monthData.people.forEach(p => allPeople.add(String(p).trim()));
+            }
+            if(Array.isArray(monthData.categories)){
+              monthData.categories.forEach(c => allCategories.add(String(c).trim()));
+            }
+          }
+        }
+        if(allPeople.size > 0 || allCategories.size > 0){
+          fileData.people = Array.from(allPeople).filter(Boolean);
+          fileData.categories = Array.from(allCategories).filter(Boolean);
+          needsSave = true;
+        }
+      }
+
+      if(needsSave){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to save remote data', err);
+        }
+      }
+    }
+
+    async function loadRemoteMonth(month){
+      return await fetchMonthRow(month);
+    }
+
+    async function saveRemoteMonth(month, monthData){
+      await upsertMonthRow(month, monthData);
+    }
+
+    async function saveRemote(){
+      if(!supabaseClient || !currentUser) return;
+      // Capture fileData snapshot immediately to prevent corruption if fileData is reset during save
+      const dataSnapshot = JSON.parse(JSON.stringify(fileData));
+      const payload = {
+        user_id: currentUser.id,
+        data: dataSnapshot,
+        updated_at: new Date().toISOString()
+      };
+      const { error } = await supabaseClient
+        .from('family_account_data')
+        .upsert(payload, { onConflict: 'user_id' });
+      if(error) throw error;
+    }
+
+    async function refreshSession(){
+      if(!supabaseClient) return;
+      const { data: sessionData } = await supabaseClient.auth.getSession();
+      if(sessionData?.session){
+        currentSession = sessionData.session;
+        currentUser = sessionData.session.user;
+      }
+      setModeBadge();
+    }
+
+    function updateAuthStatus(){
+      if(currentUser){
+        authStatus.textContent = `Signed in as ${currentUser.email}`;
+      } else {
+        authStatus.textContent = 'Not signed in.';
+      }
+      setModeBadge();
+    }
+
+    // ---------- Month switching ----------
+    async function switchMonthSafely(targetMonth){
+      const normalizedMonth = normalizeMonthKey(targetMonth);
+      if(normalizedMonth === lastLoadedMonth) return;
+      await loadFromFileOrLocal(normalizedMonth);
+      if(!data){
+        data = defaultData();
+      }
+      lastLoadedMonth = normalizedMonth;
+      monthEl.value = normalizedMonth;
+      renderLastEdited();
+      renderAll();
+      renderAverages();
+    }
+
+    // ---------- Public actions ----------
+    function setMonthToNow(){ monthEl.value = thisMonthValue(); }
+    function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
+
+    async function save(){ setLastEditedNow(); await persist(); }
+    async function addPerson(name){
+      name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
+      (fileData.people = fileData.people||[]).push(name);
+      saveGlobalToLocal();
+      if(currentUser){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync person to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      }
+      renderPeopleCats();
+    }
+    async function removePerson(name){
+      // Remove from global list
+      fileData.people = (fileData.people||[]).filter(p=>p!==name);
+      saveGlobalToLocal();
+
+      // Remove from current month expenses
+      data.expenses = (data.expenses||[]).filter(e=>e.payer!==name && e.person!==name);
+
+      // If using Supabase, remove from all months
+      if(currentUser && fileData.months){
+        for(const month in fileData.months){
+          if(fileData.months[month] && fileData.months[month].expenses){
+            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.payer!==name && e.person!==name);
+          }
+        }
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync person removal to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      } else {
+        // If using local storage, clean up all saved months
+        for(const month of listSavedMonthsLocal()){
+          const raw = localStorage.getItem(keyFor(month));
+          if(raw){
+            try{
+              const monthData = JSON.parse(raw);
+              if(monthData.expenses){
+                monthData.expenses = monthData.expenses.filter(e=>e.payer!==name && e.person!==name);
+                localStorage.setItem(keyFor(month), JSON.stringify(monthData));
+              }
+            }catch{}
+          }
+        }
+      }
+
+      await save(); renderAll();
+    }
+    async function addCategory(name){
+      name = (name||'').trim(); if(!name) return; if((fileData.categories||[]).includes(name)) return;
+      (fileData.categories = fileData.categories||[]).push(name);
+      saveGlobalToLocal();
+      if(currentUser){
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync category to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      }
+      renderPeopleCats();
+    }
+    function renameCategoryInMonth(monthData, oldName, newName){
+      if(!monthData || typeof monthData !== 'object') return false;
+      let changed = false;
+      if(Array.isArray(monthData.categories)){
+        monthData.categories = uniqueList(monthData.categories.map(c => c === oldName ? newName : c));
+        changed = true;
+      }
+      if(Array.isArray(monthData.expenses)){
+        for(const expense of monthData.expenses){
+          if(expense?.category === oldName){
+            expense.category = newName;
+            changed = true;
+          }
+        }
+      }
+      if(changed){
+        monthData.lastEdited = new Date().toISOString();
+      }
+      return changed;
+    }
+    async function renameCategory(oldName, newName){
+      oldName = String(oldName || '').trim();
+      newName = String(newName || '').trim();
+      if(!oldName || !newName || oldName === newName) return;
+      if((fileData.categories || []).includes(newName)){
+        alert('That category already exists.');
+        return;
+      }
+
+      fileData.categories = uniqueList((fileData.categories || []).map(c => c === oldName ? newName : c));
+      saveGlobalToLocal();
+
+      renameCategoryInMonth(data, oldName, newName);
+
+      if(currentUser && fileData.months){
+        const changedMonths = [];
+        for(const month of Object.keys(fileData.months)){
+          if(renameCategoryInMonth(fileData.months[month], oldName, newName)){
+            changedMonths.push({ month: normalizeMonthKey(month), data: fileData.months[month] });
+          }
+        }
+        if(activeMonth){
+          fileData.months[normalizeMonthKey(activeMonth)] = normalizeMonthData(data);
+        }
+        try{
+          await saveRemote();
+          for(const changedMonth of changedMonths){
+            await saveRemoteMonth(changedMonth.month, changedMonth.data);
+          }
+        }catch(err){
+          console.error('Failed to sync category rename to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      } else {
+        for(const month of listSavedMonthsLocal()){
+          if(!/^\d{4}-\d{1,2}$/.test(month)) continue;
+          const raw = localStorage.getItem(keyFor(month));
+          if(raw){
+            try{
+              const monthData = normalizeMonthData(JSON.parse(raw));
+              if(renameCategoryInMonth(monthData, oldName, newName)){
+                localStorage.setItem(keyFor(month), JSON.stringify(monthData));
+              }
+            }catch{}
+          }
+        }
+      }
+
+      await save();
+      renderAll();
+      renderAverages();
+    }
+    async function renameCategoryPrompt(oldName){
+      const newName = prompt('Rename category:', oldName);
+      if(newName === null) return;
+      await renameCategory(oldName, newName);
+    }
+    async function removeCategory(name){
+      // Remove from global list
+      fileData.categories = (fileData.categories||[]).filter(c=>c!==name);
+      saveGlobalToLocal();
+
+      // Remove from current month expenses
+      data.expenses = (data.expenses||[]).filter(e=>e.category!==name);
+
+      // If using Supabase, remove from all months
+      if(currentUser && fileData.months){
+        for(const month in fileData.months){
+          if(fileData.months[month] && fileData.months[month].expenses){
+            fileData.months[month].expenses = fileData.months[month].expenses.filter(e=>e.category!==name);
+          }
+        }
+        try{
+          await saveRemote();
+        }catch(err){
+          console.error('Failed to sync category removal to cloud:', err);
+          alert('Warning: Failed to sync to cloud. Please check your connection.');
+        }
+      } else {
+        // If using local storage, clean up all saved months
+        for(const month of listSavedMonthsLocal()){
+          const raw = localStorage.getItem(keyFor(month));
+          if(raw){
+            try{
+              const monthData = JSON.parse(raw);
+              if(monthData.expenses){
+                monthData.expenses = monthData.expenses.filter(e=>e.category!==name);
+                localStorage.setItem(keyFor(month), JSON.stringify(monthData));
+              }
+            }catch{}
+          }
+        }
+      }
+
+      await save(); renderAll();
+    }
+    function parseAmounts(text){
+      const tokens = String(text).split(/[\s,;]+/).map(t=>t.trim()).filter(Boolean);
+      const nums = [];
+      for(const t of tokens){ const cleaned=t.replace(/\u20ac/g,'').replace(/,/g,'.'); const n=parseFloat(cleaned); if(!isNaN(n)) nums.push(n); }
+      return nums;
+    }
+    function duplicateExpenseKey(expense){
+      const payer = String(expense?.payer || expense?.person || '').trim().toLowerCase();
+      const category = String(expense?.category || '').trim().toLowerCase();
+      const note = String(expense?.note || '').trim().toLowerCase();
+      const amount = round2(+expense?.amount || 0).toFixed(2);
+      const splits = Object.entries(expense?.splits || {})
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([person, pct]) => `${person}:${Number(pct) || 0}`)
+        .join('|');
+      return [payer, category, note, amount, splits].join('::');
+    }
+    function getDuplicateGroups(){
+      const expenses = data?.expenses || [];
+      const groups = new Map();
+      expenses.forEach((expense, index) => {
+        const key = duplicateExpenseKey(expense);
+        if(!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(index);
+      });
+      return Array.from(groups.values()).filter(indexes => indexes.length > 1);
+    }
+    function closeDuplicateReview(message){
+      duplicateReviewState = null;
+      if(duplicateReview){
+        duplicateReview.style.display = 'none';
+        duplicateReview.innerHTML = '';
+      }
+      if(message) alert(message);
+    }
+    function renderDuplicateReview(){
+      if(!duplicateReview || !duplicateReviewState) return;
+      const { groups, groupIndex, selected } = duplicateReviewState;
+      if(groupIndex >= groups.length){
+        closeDuplicateReview('Duplicate review complete.');
+        return;
+      }
+      const expenses = data?.expenses || [];
+      const indexes = groups[groupIndex].filter(index => expenses[index]);
+      if(indexes.length < 2){
+        duplicateReviewState.groupIndex += 1;
+        renderDuplicateReview();
+        return;
+      }
+
+      duplicateReview.style.display = 'block';
+      duplicateReview.innerHTML = '';
+
+      const first = expenses[indexes[0]];
+      const title = document.createElement('div');
+      title.className = 'duplicate-review-title';
+      title.textContent = `Duplicate group ${groupIndex + 1} of ${groups.length}`;
+      duplicateReview.appendChild(title);
+
+      const summary = document.createElement('div');
+      summary.className = 'muted';
+      summary.textContent = `${first.payer || first.person || 'Unknown payer'} / ${first.category || 'No category'} / ${euro(+first.amount || 0)}${first.note ? ` / ${first.note}` : ''}`;
+      duplicateReview.appendChild(summary);
+
+      const tableWrap = document.createElement('div');
+      tableWrap.style.overflow = 'auto';
+      const table = document.createElement('table');
+      table.className = 'duplicate-table';
+      table.innerHTML = '<thead><tr><th>Delete?</th><th>#</th><th>Payer</th><th>Category</th><th>Note</th><th>Amount</th><th>Split</th></tr></thead><tbody></tbody>';
+      const tbody = table.querySelector('tbody');
+      indexes.forEach((expenseIndex, position) => {
+        const expense = expenses[expenseIndex];
+        if(!selected.has(expenseIndex) && position > 0){
+          selected.add(expenseIndex);
+        }
+        const payer = expense.payer || expense.person || '';
+        const row = document.createElement('tr');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.checked = selected.has(expenseIndex);
+        checkbox.addEventListener('change', () => {
+          if(checkbox.checked) selected.add(expenseIndex);
+          else selected.delete(expenseIndex);
+        });
+        const deleteCell = document.createElement('td');
+        deleteCell.appendChild(checkbox);
+        row.appendChild(deleteCell);
+        [expenseIndex + 1, payer, expense.category || '', expense.note || '', euro(+expense.amount || 0), splitsToLabel(expense.splits || {[payer]:100})].forEach(value => {
+          const td = document.createElement('td');
+          td.textContent = value;
+          row.appendChild(td);
+        });
+        tbody.appendChild(row);
+      });
+      tableWrap.appendChild(table);
+      duplicateReview.appendChild(tableWrap);
+
+      const actions = document.createElement('div');
+      actions.className = 'duplicate-actions';
+      const deleteSelectedBtn = document.createElement('button');
+      deleteSelectedBtn.className = 'btn warn';
+      deleteSelectedBtn.type = 'button';
+      deleteSelectedBtn.textContent = 'Delete selected';
+      deleteSelectedBtn.addEventListener('click', applyDuplicateDeletion);
+      const keepAllBtn = document.createElement('button');
+      keepAllBtn.className = 'btn ghost';
+      keepAllBtn.type = 'button';
+      keepAllBtn.textContent = 'Keep all / next';
+      keepAllBtn.addEventListener('click', () => {
+        indexes.forEach(index => selected.delete(index));
+        duplicateReviewState.groupIndex += 1;
+        renderDuplicateReview();
+      });
+      const cancelBtn = document.createElement('button');
+      cancelBtn.className = 'btn ghost';
+      cancelBtn.type = 'button';
+      cancelBtn.textContent = 'Cancel review';
+      cancelBtn.addEventListener('click', () => closeDuplicateReview());
+      actions.appendChild(deleteSelectedBtn);
+      actions.appendChild(keepAllBtn);
+      actions.appendChild(cancelBtn);
+      duplicateReview.appendChild(actions);
+    }
+    async function applyDuplicateDeletion(){
+      if(!duplicateReviewState) return;
+      const currentGroup = duplicateReviewState.groups[duplicateReviewState.groupIndex] || [];
+      const selectedInGroup = currentGroup.filter(index => duplicateReviewState.selected.has(index));
+      if(!selectedInGroup.length){
+        duplicateReviewState.groupIndex += 1;
+        renderDuplicateReview();
+        return;
+      }
+      data.expenses = (data.expenses || []).filter((_, index) => !selectedInGroup.includes(index));
+      await save();
+      renderAll();
+      const remainingGroups = getDuplicateGroups();
+      if(!remainingGroups.length){
+        closeDuplicateReview('Selected duplicates deleted. No duplicate groups remain.');
+        return;
+      }
+      duplicateReviewState = { groups:remainingGroups, groupIndex:0, selected:new Set() };
+      renderDuplicateReview();
+    }
+    async function checkDuplicateExpenses(){
+      const expenses = data?.expenses || [];
+      if(expenses.length < 2){
+        closeDuplicateReview('There are not enough expenses in this month to check for duplicates.');
+        return;
+      }
+      const groups = getDuplicateGroups();
+      if(!groups.length){
+        closeDuplicateReview('No duplicate entries found for this month.');
+        return;
+      }
+      duplicateReviewState = { groups, groupIndex:0, selected:new Set() };
+      renderDuplicateReview();
+    }
+
+    async function addQuickExpenses(){
+      const payer = quickPerson.value;
+      const category = quickCategory.value;
+      if(!payer || !category){ alert('Please select a person and category'); return; }
+      const amounts = parseAmounts(quickAmounts.value);
+      if(!amounts.length){ alert('Add at least one amount'); return; }
+      const note = document.getElementById('quickNote') ? document.getElementById('quickNote').value.trim() : '';
+      const splits = getSplitsFromSliders(quickSplitSliders);
+      for(const a of amounts){ if(a<=0) continue; (data.expenses = data.expenses||[]).push({payer, category, amount: round2(+a), note, splits}); }
+      await save(); renderAll(); quickAmounts.value='';
+    }
+
+    function makeBatchRow(category=''){
+      const row=document.createElement('div'); row.className='row';
+      row.innerHTML='\
+        <div class="col" style="flex:1;min-width:160px"><label>Category</label><select class="batchCategory"></select></div>\
+        <div class="col" style="width:160px"><label>Amount</label><input class="batchAmount" type="number" inputmode="decimal" step="0.01" placeholder="0.00"/></div>\
+        <div class="col" style="flex:1;min-width:200px"><label>Note (optional)</label><input class="batchNote" type="text" placeholder="e.g., receipt #1234"/></div>\
+        <div class="expense-added" aria-live="polite" aria-atomic="true"></div>';
+      const sel=row.querySelector('.batchCategory'); fillSelect(sel, (fileData.categories||[])); if(category) sel.value=category;
+      return row;
+    }
+    async function saveBatchExpense(){
+      const payer=batchPerson.value; if(!payer){ alert('Select a person'); return; }
+      let row=batchRows.querySelector('.row');
+      if(!row){
+        row = makeBatchRow();
+        batchRows.appendChild(row);
+      }
+      const splits = getSplitsFromSliders(batchSplitSliders);
+      const categorySelect = row.querySelector('.batchCategory');
+      const cat=categorySelect.value;
+      const amountInput = row.querySelector('.batchAmount');
+      const noteInput = row.querySelector('.batchNote');
+      const addedStatus = row.querySelector('.expense-added');
+      const val=parseFloat(amountInput.value);
+      const note=(noteInput?.value||'').trim();
+      if(!cat){ alert('Please select a category'); return; }
+      if(!isFinite(val) || val<=0){ alert('Please enter a valid amount'); return; }
+      (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits});
+      await save();
+      renderAll();
+      categorySelect.value='';
+      amountInput.value='';
+      if(noteInput) noteInput.value='';
+      if(addedStatus){
+        addedStatus.textContent='✓';
+        addedStatus.classList.add('show');
+        setTimeout(()=> addedStatus.classList.remove('show'), 1200);
+        setTimeout(()=> { addedStatus.textContent=''; }, 1500);
+      }
+      amountInput.focus();
+    }
+
+    // ---------- Init & events ----------
+    document.addEventListener('DOMContentLoaded', async ()=>{
+      initSupabase();
+      if(supabaseClient){
+        await refreshSession();
+
+        // Handle email confirmation and password reset links
+        const handleAuthCallback = async () => {
+          const hashParams = new URLSearchParams(window.location.hash.substring(1));
+          const type = hashParams.get('type');
+          const error = hashParams.get('error');
+          const errorDescription = hashParams.get('error_description');
+
+          if(error){
+            showAuthMessage(decodeURIComponent(errorDescription || error), 'error');
+            // Clean up URL
+            window.history.replaceState({}, document.title, window.location.pathname);
+            return;
+          }
+
+          if(type === 'signup'){
+            showAuthMessage('Email confirmed! You can now sign in.', 'success');
+            window.history.replaceState({}, document.title, window.location.pathname);
+          } else if(type === 'recovery'){
+            const newPassword = prompt('Enter your new password (min. 6 characters):');
+            if(newPassword && validatePassword(newPassword)){
+              try {
+                const { error: updateError } = await supabaseClient.auth.updateUser({ password: newPassword });
+                if(updateError){
+                  showAuthMessage(updateError.message, 'error');
+                } else {
+                  showAuthMessage('Password updated successfully! You are now signed in.', 'success');
+                  authPassword.value = '';
+                }
+              } catch(err){
+                showAuthMessage('Failed to update password. Please try again.', 'error');
+              }
+            } else if(newPassword){
+              showAuthMessage('Password must be at least 6 characters long.', 'error');
+            }
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        };
+
+        // Check for auth callback on page load
+        if(window.location.hash){
+          await handleAuthCallback();
+        }
+
+        supabaseClient.auth.onAuthStateChange(async (event, session) => {
+          currentSession = session || null;
+          currentUser = currentSession?.user || null;
+          if(currentUser){
+            await loadRemote();
+            await loadFromFileOrLocal(monthEl.value);
+          }
+          updateAuthStatus();
+          renderAll();
+          renderAverages();
+
+          // Handle specific auth events
+          if(event === 'SIGNED_IN' && !window.location.hash){
+            // Only show if not from callback (callback shows its own message)
+            authStatus.textContent = `Signed in as ${currentUser?.email || ''}`;
+          } else if(event === 'SIGNED_OUT'){
+            authStatus.textContent = 'Not signed in.';
+          }
+        });
+      }
+      const initial = thisMonthValue();
+      monthEl.value = initial;
+      if(currentUser){
+        await loadRemote();
+      } else {
+        // Load global people/categories from local storage if not using Supabase
+        loadGlobalFromLocal();
+      }
+      await loadFromFileOrLocal(initial);
+      lastLoadedMonth = initial;
+      loadTheme();
+      setupCollapsibles();
+      renderAll();
+      renderAverages();
+      updateAuthStatus();
+      if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
+
+      if(analysisView) analysisView.addEventListener('change', renderAverages);
+      if(analysisCompareA) analysisCompareA.addEventListener('change', renderAverages);
+      if(analysisCompareB) analysisCompareB.addEventListener('change', renderAverages);
+
+      monthEl.addEventListener('change', async ()=>{
+        const target = monthEl.value;
+        await switchMonthSafely(target);
+        buildSplitSliders(quickSplitSliders);
+        buildSplitSliders(batchSplitSliders);
+      });
+
+      addPersonBtn.addEventListener('click', async ()=>{
+        const v = personNameEl.value; personNameEl.value=''; await addPerson(v); personNameEl.focus();
+        buildSplitSliders(quickSplitSliders); buildSplitSliders(batchSplitSliders);
+      });
+      personNameEl.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ addPersonBtn.click(); }});
+
+      addCategoryBtn.addEventListener('click', async ()=>{
+        const v = categoryNameEl.value; categoryNameEl.value=''; await addCategory(v); categoryNameEl.focus();
+      });
+
+      modeQuickBtn.addEventListener('click', ()=>{
+        modeQuickBtn.classList.add('active'); modeBatchBtn.classList.remove('active');
+        quickPanel.style.display='block'; batchPanel.style.display='none';
+      });
+      modeBatchBtn.addEventListener('click', ()=>{
+        modeBatchBtn.classList.add('active'); modeQuickBtn.classList.remove('active');
+        quickPanel.style.display='none'; batchPanel.style.display='block';
+        if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
+      });
+
+      addQuickBtn.addEventListener('click', addQuickExpenses);
+      clearQuickBtn.addEventListener('click', ()=>{ quickAmounts.value=''; });
+
+      saveBatchBtn.addEventListener('click', saveBatchExpense);
+
+      clearMonthBtn.addEventListener('click', async ()=>{
+        const msg = "Are you sure you want to delete this month's expenses? You won't be able to get them back.";
+        if(confirm(msg)){
+          data.expenses = []; await save(); renderAll();
+        }
+      });
+      if(checkDuplicatesBtn){
+        checkDuplicatesBtn.addEventListener('click', checkDuplicateExpenses);
+      }
+
+      signInBtn.addEventListener('click', async ()=>{
+        hideAuthMessage();
+        if(!supabaseClient){
+          showAuthMessage('Supabase is not configured. Please add your credentials to the code.', 'error');
+          return;
+        }
+        const email = authEmail.value.trim();
+        const password = authPassword.value;
+
+        // Validation
+        if(!email || !password){
+          showAuthMessage('Please enter both email and password.', 'error');
+          return;
+        }
+        if(!validateEmail(email)){
+          showAuthMessage('Please enter a valid email address.', 'error');
+          return;
+        }
+
+        setButtonLoading(signInBtn, true);
+        try {
+          const { data: signInData, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+          if(error){
+            showAuthMessage(error.message, 'error');
+            return;
+          }
+          if(signInData?.session){
+            currentSession = signInData.session;
+            currentUser = signInData.session.user;
+          }
+          await refreshSession();
+          await loadRemote();
+          await loadFromFileOrLocal(monthEl.value);
+          updateAuthStatus();
+          renderAll();
+          renderAverages();
+          showAuthMessage(`Successfully signed in as ${currentUser?.email || ''}`, 'success');
+          authPassword.value = ''; // Clear password field
+        } finally {
+          setButtonLoading(signInBtn, false);
+        }
+      });
+
+      signUpBtn.addEventListener('click', async ()=>{
+        hideAuthMessage();
+        if(!supabaseClient){
+          showAuthMessage('Supabase is not configured. Please add your credentials to the code.', 'error');
+          return;
+        }
+        const email = authEmail.value.trim();
+        const password = authPassword.value;
+
+        // Validation
+        if(!email || !password){
+          showAuthMessage('Please enter both email and password.', 'error');
+          return;
+        }
+        if(!validateEmail(email)){
+          showAuthMessage('Please enter a valid email address.', 'error');
+          return;
+        }
+        if(!validatePassword(password)){
+          showAuthMessage('Password must be at least 6 characters long.', 'error');
+          return;
+        }
+
+        setButtonLoading(signUpBtn, true);
+        try {
+          const { data, error } = await supabaseClient.auth.signUp({ email, password });
+          if(error){
+            showAuthMessage(error.message, 'error');
+            return;
+          }
+
+          // Check if email confirmation is required
+          if(data?.user && !data.session){
+            showAuthMessage('Account created! Check your email to confirm your account, then sign in.', 'success');
+            authPassword.value = ''; // Clear password field
+          } else if(data?.session){
+            // Auto-confirmation is enabled, user is already signed in
+            showAuthMessage('Account created and signed in successfully!', 'success');
+            authPassword.value = '';
+          }
+        } finally {
+          setButtonLoading(signUpBtn, false);
+        }
+      });
+
+      signOutBtn.addEventListener('click', async ()=>{
+        if(!supabaseClient){ return; }
+        hideAuthMessage();
+        setButtonLoading(signOutBtn, true);
+        let signOutError = null;
+        try {
+          await withTimeout(supabaseClient.auth.signOut(), 5000, 'Sign out');
+        } catch(err){
+          signOutError = err;
+          console.warn('Sign out failed', err);
+        }
+        currentUser = null;
+        currentSession = null;
+        fileData = { people: [], categories: [], months: {} };
+        // Load global data from local storage after signing out
+        loadGlobalFromLocal();
+        updateAuthStatus();
+        renderAll();
+        renderAverages();
+        if(signOutError){
+          showAuthMessage('Signed out locally. Cloud sign-out may have timed out.', 'info');
+        } else {
+          showAuthMessage('Successfully signed out.', 'success');
+        }
+        authPassword.value = ''; // Clear password field
+        setButtonLoading(signOutBtn, false);
+      });
+
+      forgotPasswordBtn.addEventListener('click', async ()=>{
+        hideAuthMessage();
+        if(!supabaseClient){
+          showAuthMessage('Supabase is not configured. Please add your credentials to the code.', 'error');
+          return;
+        }
+        const email = authEmail.value.trim();
+
+        // Validation
+        if(!email){
+          showAuthMessage('Please enter your email address.', 'error');
+          return;
+        }
+        if(!validateEmail(email)){
+          showAuthMessage('Please enter a valid email address.', 'error');
+          return;
+        }
+
+        if(!confirm(`Send password reset email to ${email}?`)){
+          return;
+        }
+
+        setButtonLoading(forgotPasswordBtn, true);
+        try {
+          const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+            redirectTo: window.location.origin + window.location.pathname
+          });
+          if(error){
+            showAuthMessage(error.message, 'error');
+            return;
+          }
+          showAuthMessage('Password reset email sent! Check your inbox.', 'success');
+        } finally {
+          setButtonLoading(forgotPasswordBtn, false);
+        }
+      });
+
+      // Keyboard support: Enter key on password field triggers sign in
+      authPassword.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          signInBtn.click();
+        }
+      });
+
+      // Keyboard support: Enter key on email field focuses password
+      authEmail.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){
+          e.preventDefault();
+          authPassword.focus();
+        }
+      });
+
+      if(themeToggle){
+        themeToggle.addEventListener('change', (e)=>{
+          saveTheme(e.target.checked);
+        });
+      }
+
+      // initial split options
+      buildSplitSliders(quickSplitSliders);
+      buildSplitSliders(batchSplitSliders);
+    });
