@@ -10,6 +10,7 @@
 <link rel="icon" href="public/favicon-32.png" sizes="32x32" />
 <link rel="icon" href="public/favicon-48.png" sizes="48x48" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 
 <script defer src="js/service-worker-cleanup.js"></script>
 </head>
@@ -22,6 +23,8 @@
       </div>
       <div class="header-right">
         <span id="modeBadge">Local storage</span>
+        <span>•</span>
+        <span id="cloudSyncStatus">Cloud: not signed in</span>
         <span>•</span>
         <span>Last edited: <span id="lastEdited">—</span></span>
       </div>
@@ -56,6 +59,7 @@
             <button class="btn alt" id="signUpBtn" type="button">Sign up</button>
             <button class="btn ghost" id="forgotPasswordBtn" type="button">Forgot password</button>
             <button class="btn ghost" id="signOutBtn" type="button">Sign out</button>
+            <button class="btn ghost" id="saveCloudBtn" type="button">Save to cloud</button>
           </div>
           <div class="note" id="authStatus">Not signed in.</div>
           <div class="note" style="margin-top:8px">Sign up requires email confirmation (min. 6 characters password). Your data syncs to the cloud when signed in.</div>
@@ -107,6 +111,7 @@
           <div class="seg" style="margin-bottom:10px">
             <button id="modeBatch" class="active" type="button">Quick add</button>
             <button id="modeQuick" type="button">Batch add (same category)</button>
+            <button id="modeImport" type="button">Import bank statement</button>
           </div>
 
           <div id="quickPanel" style="display:none">
@@ -132,6 +137,10 @@
               </div>
             </div>
             <div class="row">
+              <div class="col" style="width:180px">
+                <label for="quickDate">Date</label>
+                <input id="quickDate" type="date" />
+              </div>
               <div class="col" style="flex:1">
                 <label>Note (optional, applied to all)</label>
                 <input id="quickNote" type="text" placeholder="e.g., supermarket run" />
@@ -154,10 +163,51 @@
                 <div id="batchSplitSliders" class="split-sliders"></div>
               </div>
             </div>
+            <div class="row">
+              <div class="col" style="width:180px">
+                <label for="batchDate">Date</label>
+                <input id="batchDate" type="date" />
+              </div>
+            </div>
             <div id="batchRows"></div>
             <div class="row">
               <button class="btn" id="saveBatchBtn" type="button">Add expense</button>
             </div>
+          </div>
+
+          <div id="importPanel" style="display:none">
+            <div class="row">
+              <div class="col" style="flex:1;min-width:220px">
+                <label for="importFile">Spreadsheet file</label>
+                <input id="importFile" type="file" accept=".xlsx,.xls,.csv" />
+              </div>
+              <div class="note">Allowed file types: .xls, .xlsx, .csv</div>
+            </div>
+            <div id="importMapping" class="import-panel" style="display:none">
+              <div id="importFormatNotice" class="note"></div>
+              <div class="row">
+                <div class="col" style="flex:1;min-width:150px"><label>Date column</label><select id="importDateColumn"></select></div>
+                <div class="col" style="flex:1;min-width:150px"><label>Description column</label><select id="importDescriptionColumn"></select></div>
+                <div class="col" style="flex:1;min-width:150px"><label>Amount column</label><select id="importAmountColumn"></select></div>
+                <div class="col" style="flex:1;min-width:150px"><label>Payer column</label><select id="importPayerColumn"></select></div>
+              </div>
+              <div class="row">
+                <label class="import-same-payer">
+                  <input id="importUseSamePayer" type="checkbox" checked />
+                  Use same payer for all imported rows
+                </label>
+                <div class="col" style="flex:1;min-width:180px">
+                  <label for="importSamePayer">Payer</label>
+                  <select id="importSamePayer"></select>
+                </div>
+              </div>
+              <div class="row">
+                <button class="btn" id="buildImportPreviewBtn" type="button">Preview rows</button>
+                <button class="btn ghost" id="clearImportBtn" type="button">Clear import</button>
+              </div>
+            </div>
+            <datalist id="categorySuggestions"></datalist>
+            <div id="importPreview" class="import-preview" style="display:none"></div>
           </div>
         </div>
       </div>

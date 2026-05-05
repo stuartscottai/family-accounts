@@ -2,6 +2,8 @@
     const monthEl = document.getElementById('month');
     const modeBadge = document.getElementById('modeBadge');
     const lastEditedEl = document.getElementById('lastEdited');
+    const cloudSyncStatus = document.getElementById('cloudSyncStatus');
+    const saveCloudBtn = document.getElementById('saveCloudBtn');
 
     const personNameEl = document.getElementById('personName');
     const addPersonBtn = document.getElementById('addPersonBtn');
@@ -13,18 +15,22 @@
 
     const modeQuickBtn = document.getElementById('modeQuick');
     const modeBatchBtn = document.getElementById('modeBatch');
+    const modeImportBtn = document.getElementById('modeImport');
     const quickPanel = document.getElementById('quickPanel');
     const batchPanel = document.getElementById('batchPanel');
+    const importPanel = document.getElementById('importPanel');
 
     const quickPerson = document.getElementById('quickPerson');
     const quickCategory = document.getElementById('quickCategory');
     const quickSplitSliders = document.getElementById('quickSplitSliders');
     const quickAmounts = document.getElementById('quickAmounts');
+    const quickDate = document.getElementById('quickDate');
     const addQuickBtn = document.getElementById('addQuickBtn');
     const clearQuickBtn = document.getElementById('clearQuickBtn');
 
     const batchPerson = document.getElementById('batchPerson');
     const batchSplitSliders = document.getElementById('batchSplitSliders');
+    const batchDate = document.getElementById('batchDate');
     const batchRows = document.getElementById('batchRows');
     const saveBatchBtn = document.getElementById('saveBatchBtn');
 
@@ -42,6 +48,21 @@
 
     const clearMonthBtn = document.getElementById('clearMonthBtn');
     const checkDuplicatesBtn = document.getElementById('checkDuplicatesBtn');
+
+    // Spreadsheet import
+    const importFile = document.getElementById('importFile');
+    const importMapping = document.getElementById('importMapping');
+    const importDateColumn = document.getElementById('importDateColumn');
+    const importDescriptionColumn = document.getElementById('importDescriptionColumn');
+    const importAmountColumn = document.getElementById('importAmountColumn');
+    const importPayerColumn = document.getElementById('importPayerColumn');
+    const importFormatNotice = document.getElementById('importFormatNotice');
+    const importUseSamePayer = document.getElementById('importUseSamePayer');
+    const importSamePayer = document.getElementById('importSamePayer');
+    const buildImportPreviewBtn = document.getElementById('buildImportPreviewBtn');
+    const clearImportBtn = document.getElementById('clearImportBtn');
+    const importPreview = document.getElementById('importPreview');
+    const categorySuggestions = document.getElementById('categorySuggestions');
 
     // Analysis
     const analysisView = document.getElementById('analysisView');
@@ -69,6 +90,15 @@
     let activeMonth = null;
     let activeExpensePayerFilter = 'all';
     let duplicateReviewState = null;
+    let importRowsRaw = [];
+    let importDraftRows = [];
+    let importDetectedFormat = 'generic';
+    let importInProgress = false;
+    let duplicateDeleteInProgress = false;
+    let cloudSaveQueue = Promise.resolve();
+    let cloudSavePending = false;
+    let cloudSaveRunning = false;
+    let remoteLoadState = 'signed-out';
     let supabaseClient = null;
     let currentUser = null;
     let currentSession = null;
@@ -95,6 +125,22 @@
     //    -- Policy: Users can only access their own data
     //    CREATE POLICY "Users can manage their own data"
     //      ON family_account_data
+    //      FOR ALL
+    //      USING (auth.uid() = user_id)
+    //      WITH CHECK (auth.uid() = user_id);
+    //
+    //    CREATE TABLE family_account_months (
+    //      user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    //      month TEXT NOT NULL,
+    //      data JSONB NOT NULL DEFAULT '{"expenses": []}'::jsonb,
+    //      updated_at TIMESTAMPTZ DEFAULT NOW(),
+    //      PRIMARY KEY (user_id, month)
+    //    );
+    //
+    //    ALTER TABLE family_account_months ENABLE ROW LEVEL SECURITY;
+    //
+    //    CREATE POLICY "Users can manage their own month data"
+    //      ON family_account_months
     //      FOR ALL
     //      USING (auth.uid() = user_id)
     //      WITH CHECK (auth.uid() = user_id);
@@ -147,6 +193,9 @@
     function hasExpenses(monthData){
       return Array.isArray(monthData?.expenses) && monthData.expenses.length > 0;
     }
+    function expenseCount(monthData){
+      return Array.isArray(monthData?.expenses) ? monthData.expenses.length : 0;
+    }
     function shouldReplaceMonth(existing, incoming){
       if(!existing) return true;
       if(!incoming) return false;
@@ -154,13 +203,43 @@
     }
     function isNewerMonthData(localData, remoteData){
       if(!localData) return false;
-      if(!remoteData) return true;
+      if(!remoteData) return hasExpenses(localData);
+      if(hasExpenses(remoteData) && !hasExpenses(localData)) return false;
       const localTime = Date.parse(localData.lastEdited || '') || 0;
       const remoteTime = Date.parse(remoteData.lastEdited || '') || 0;
       if(localTime && remoteTime && localTime > remoteTime) return true;
-      const localCount = (localData.expenses || []).length;
-      const remoteCount = (remoteData.expenses || []).length;
+      const localCount = expenseCount(localData);
+      const remoteCount = expenseCount(remoteData);
       return localCount > remoteCount;
+    }
+    function mergeProtectedMonths(remoteMonths, localMonths, options = {}){
+      const merged = {};
+      const allKeys = new Set([
+        ...Object.keys(remoteMonths || {}),
+        ...Object.keys(localMonths || {})
+      ].map(normalizeMonthKey));
+      for(const key of allKeys){
+        const remoteData = remoteMonths?.[key] ? normalizeMonthData(remoteMonths[key]) : null;
+        const localData = localMonths?.[key] ? normalizeMonthData(localMonths[key]) : null;
+        if(remoteData && hasExpenses(remoteData) && localData && !hasExpenses(localData) && !options.allowEmptyOverwrite){
+          merged[key] = remoteData;
+          continue;
+        }
+        merged[key] = localData || remoteData || defaultData();
+      }
+      return merged;
+    }
+    function storeCloudSafetyBackup(remoteData){
+      try{
+        const backups = JSON.parse(localStorage.getItem('famacct:cloudBackups') || '[]');
+        backups.unshift({
+          savedAt: new Date().toISOString(),
+          data: remoteData || {}
+        });
+        localStorage.setItem('famacct:cloudBackups', JSON.stringify(backups.slice(0, 20)));
+      }catch(err){
+        console.warn('Could not create local cloud safety backup', err);
+      }
     }
     function getLocalMonthData(monthKey){
       const raw = localStorage.getItem(keyFor(normalizeMonthKey(monthKey)));
@@ -215,7 +294,7 @@
       };
     }
     async function fetchJson(url, options, retryAuth = true){
-      const res = await fetch(url, options);
+      const res = await withTimeout(fetch(url, options), 8000, 'Network request');
       if(res.status === 401 && retryAuth){
         const refreshed = await ensureFreshSession();
         if(refreshed){
@@ -247,7 +326,7 @@
         return [];
       }
     }
-    async function fetchMonthRow(month){
+    async function fetchMonthRow(month, throwOnError = false){
       const headers = await getAuthHeaders();
       if(!headers || !currentUser) return null;
       const key = normalizeMonthKey(month);
@@ -258,33 +337,31 @@
           return rows[0].data;
         }
       }catch(err){
+        if(throwOnError) throw err;
         console.warn('Failed to fetch month row', err);
       }
       return null;
     }
     async function upsertMonthRow(month, monthData){
       const headers = await getAuthHeaders();
-      if(!headers || !currentUser) return;
+      if(!headers || !currentUser) throw new Error('Not signed in.');
       const key = normalizeMonthKey(month);
       const url = `${SUPABASE_URL}/rest/v1/family_account_months?on_conflict=user_id,month`;
       const body = JSON.stringify([{
         user_id: currentUser.id,
         month: key,
-        data: monthData
+        data: monthData,
+        updated_at: new Date().toISOString()
       }]);
-      try{
-        await fetchJson(url, {
-          method: 'POST',
-          headers: {
-            ...headers,
-            'Content-Type': 'application/json',
-            Prefer: 'resolution=merge-duplicates,return=minimal'
-          },
-          body
-        });
-      }catch(err){
-        console.warn('Failed to upsert month row', err);
-      }
+      await fetchJson(url, {
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json',
+          Prefer: 'resolution=merge-duplicates,return=minimal'
+        },
+        body
+      });
     }
     function euro(n){ return n.toLocaleString('es-ES',{style:'currency',currency:'EUR'}) }
     function round2(n){ return Math.round((n+Number.EPSILON)*100)/100 }
@@ -306,6 +383,100 @@
       }
       modeBadge.textContent = 'Local storage';
     }
+    function setCloudStatus(status, message){
+      if(cloudSyncStatus) cloudSyncStatus.textContent = message;
+      if(saveCloudBtn){
+        saveCloudBtn.disabled = ['signed-out', 'syncing', 'loading', 'failed'].includes(status) || !currentUser;
+        saveCloudBtn.textContent = status === 'syncing' ? 'Saving...' : 'Save to cloud';
+      }
+    }
+    function updateCloudStatus(){
+      if(!currentUser){
+        remoteLoadState = 'signed-out';
+        setCloudStatus('signed-out', 'Cloud: not signed in');
+      } else if(remoteLoadState === 'loading'){
+        setCloudStatus('loading', 'Cloud: loading...');
+      } else if(remoteLoadState === 'failed'){
+        setCloudStatus('failed', 'Cloud: load failed');
+      } else if(cloudSaveRunning){
+        setCloudStatus('syncing', 'Cloud: syncing...');
+      } else if(cloudSavePending){
+        setCloudStatus('pending', 'Cloud: local changes pending');
+      } else {
+        setCloudStatus('synced', 'Cloud: synced');
+      }
+    }
+    function queueCloudSave(label, task){
+      if(!currentUser){ updateCloudStatus(); return; }
+      if(remoteLoadState !== 'ready'){
+        cloudSavePending = true;
+        updateCloudStatus();
+        console.warn(`${label}: cloud data is not loaded, so upload was blocked.`);
+        return;
+      }
+      cloudSavePending = true;
+      updateCloudStatus();
+      cloudSaveQueue = cloudSaveQueue
+        .catch(()=>{})
+        .then(async ()=>{
+          cloudSaveRunning = true;
+          updateCloudStatus();
+          try{
+            await withTimeout(task(), 9000, label);
+            cloudSavePending = false;
+          }catch(err){
+            console.warn(label, err);
+            cloudSavePending = true;
+          }finally{
+            cloudSaveRunning = false;
+            updateCloudStatus();
+          }
+        });
+    }
+    async function syncCloudNow(options = {}){
+      if(!currentUser){
+        alert('Sign in before saving to cloud.');
+        updateCloudStatus();
+        return false;
+      }
+      if(remoteLoadState !== 'ready'){
+        alert('Cloud data has not loaded successfully yet. To protect your existing data, nothing will be uploaded until cloud loading succeeds.');
+        updateCloudStatus();
+        return false;
+      }
+      const normalizedMonth = normalizeMonthKey(activeMonth || monthEl.value);
+      const snapshot = JSON.parse(JSON.stringify(data || defaultData()));
+      localSaveCurrent(normalizedMonth, snapshot);
+      data = snapshot;
+      fileData.months[normalizedMonth] = snapshot;
+      cloudSaveRunning = true;
+      updateCloudStatus();
+      try{
+        await withTimeout((async ()=>{
+          await cloudSaveQueue.catch(()=>{});
+          await saveRemote(options);
+          await saveRemoteMonth(normalizedMonth, snapshot, options);
+          const savedMonth = await loadRemoteMonthStrict(normalizedMonth);
+          const savedCount = (savedMonth?.expenses || []).length;
+          const expectedCount = (snapshot?.expenses || []).length;
+          if(savedCount !== expectedCount){
+            throw new Error(`Cloud verification failed for ${normalizedMonth}: expected ${expectedCount} expenses, found ${savedCount}.`);
+          }
+        })(), 12000, 'Manual cloud save');
+        cloudSavePending = false;
+        updateCloudStatus();
+        return true;
+      }catch(err){
+        console.warn('Manual cloud save failed', err);
+        cloudSavePending = true;
+        updateCloudStatus();
+        alert(`Cloud save failed. Your changes are still saved on this device.\n\n${err.message || err}`);
+        return false;
+      }finally{
+        cloudSaveRunning = false;
+        updateCloudStatus();
+      }
+    }
     function formatUK(iso){
       if(!iso) return '—';
       const d = new Date(iso);
@@ -315,6 +486,24 @@
       const HH = String(d.getHours()).padStart(2,'0');
       const min = String(d.getMinutes()).padStart(2,'0');
       return `${dd}/${mm}/${yyyy} ${HH}:${min}`;
+    }
+    function todayDateValue(){
+      return new Date().toISOString().slice(0, 10);
+    }
+    function dateValueFromMonth(month){
+      const key = normalizeMonthKey(month);
+      return /^\d{4}-\d{2}$/.test(key) ? `${key}-01` : todayDateValue();
+    }
+    function formatExpenseDate(value){
+      if(!value) return '—';
+      const parsed = parseImportDate(value, /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(String(value || '')));
+      if(!parsed) return String(value);
+      return parsed.toLocaleDateString('en-GB');
+    }
+    function dateInputValueFromImport(value, preferMonthFirst = false){
+      const parsed = parseImportDate(value, preferMonthFirst);
+      if(!parsed) return '';
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}`;
     }
     function setLastEditedNow(){ if(data){ data.lastEdited = new Date().toISOString(); renderLastEdited(); } }
     function renderLastEdited(){ lastEditedEl.textContent = formatUK(data?.lastEdited); }
@@ -497,7 +686,7 @@
       const months = [];
       for(let i=0;i<localStorage.length;i++){
         const k = localStorage.key(i);
-        if(k && k.startsWith('famacct:')) months.push(k.split(':')[1]);
+        if(k && /^famacct:\d{4}-\d{2}$/.test(k)) months.push(k.split(':')[1]);
       }
       months.sort((a,b)=> a<b?1:(a>b?-1:0));
       return months;
@@ -576,7 +765,7 @@
       }
     }
 
-    async function persist(){
+    async function persist(options = {}){
       const targetMonth = activeMonth || monthEl.value;
       const normalizedMonth = normalizeMonthKey(targetMonth);
       const snapshot = JSON.parse(JSON.stringify(data || defaultData()));
@@ -584,13 +773,10 @@
       data = snapshot;
       if(currentUser){
         fileData.months[normalizedMonth] = snapshot;
-        try{
-          await saveRemote();
-        }catch(err){
-          console.error('Failed to sync to cloud:', err);
-          alert('Warning: Failed to sync to cloud. Please check your connection.');
-        }
-        await saveRemoteMonth(normalizedMonth, snapshot);
+        queueCloudSave('Cloud sync failed', async ()=>{
+          await saveRemote(options);
+          await saveRemoteMonth(normalizedMonth, snapshot, options);
+        });
       } else {
         saveGlobalToLocal();
       }
@@ -855,6 +1041,7 @@
       fillSelect(quickPerson, (fileData.people||[]));
       fillSelect(quickCategory, (fileData.categories||[]));
       fillSelect(batchPerson, (fileData.people||[]));
+      if(importSamePayer) fillSelect(importSamePayer, (fileData.people||[]));
       buildSplitSliders(quickSplitSliders);
       buildSplitSliders(batchSplitSliders);
       [...batchRows.querySelectorAll('.batchCategory')].forEach(sel=>fillSelect(sel, (fileData.categories||[])));
@@ -891,7 +1078,7 @@
 
       if(headRow){
         headRow.innerHTML = '';
-        ['#', 'Payer', 'Category', 'Note', 'Amount', 'Split', ''].forEach(label => {
+        ['#', 'Date', 'Payer', 'Category', 'Note', 'Amount', 'Split', ''].forEach(label => {
           const th = document.createElement('th');
           th.textContent = label;
           headRow.appendChild(th);
@@ -919,7 +1106,7 @@
         total += amount;
         const tr = document.createElement('tr');
         const splitTxt = splitsToLabel(e.splits||{[payer]:100});
-        const cells = [i++, payer, e.category || '', e.note || '', euro(amount), splitTxt];
+        const cells = [i++, formatExpenseDate(e.date), payer, e.category || '', e.note || '', euro(amount), splitTxt];
         for(const cell of cells){
           const td = document.createElement('td');
           td.textContent = cell;
@@ -940,7 +1127,7 @@
       if(footRow){
         footRow.innerHTML = '';
         const labelCell = document.createElement('td');
-        labelCell.colSpan = 4;
+        labelCell.colSpan = 5;
         labelCell.textContent = 'Total';
         footRow.appendChild(labelCell);
         const allTotalCell = document.createElement('td');
@@ -1245,112 +1432,117 @@
     }
 
     async function loadRemote(){
-      if(!supabaseClient || !currentUser) return;
+      if(!supabaseClient || !currentUser) return false;
+      remoteLoadState = 'loading';
+      updateCloudStatus();
       let needsSave = false;
-      const { data: rows, error } = await supabaseClient
-        .from('family_account_data')
-        .select('data')
-        .eq('user_id', currentUser.id)
-        .limit(1);
-      if(error){
-        console.error(error);
-        return;
-      }
-      if(rows && rows.length){
-        fileData = rows[0].data || { people: [], categories: [], months: {} };
-      } else {
-        fileData = { people: [], categories: [], months: {} };
-        needsSave = true;
-      }
-
-      if(!fileData.people) fileData.people = [];
-      if(!fileData.categories) fileData.categories = [];
-      if(!fileData.months || typeof fileData.months !== 'object') fileData.months = {};
-
-      // Load legacy per-month rows if they exist and merge into months map.
-      const monthsRows = await fetchMonthsRows();
-      const monthsRowMap = {};
-      if(Array.isArray(monthsRows) && monthsRows.length){
-        for(const row of monthsRows){
-          const key = normalizeMonthKey(row?.month);
-          const incoming = row?.data ? normalizeMonthData(row.data) : null;
-          if(key && incoming){
-            monthsRowMap[key] = incoming;
-          }
-        }
-      }
-      for(const [key, incoming] of Object.entries(monthsRowMap)){
-        const existing = key ? fileData.months[key] : null;
-        if(key && incoming && shouldReplaceMonth(existing, incoming)){
-          fileData.months[key] = incoming;
+      try{
+        const { data: rows, error } = await supabaseClient
+          .from('family_account_data')
+          .select('data')
+          .eq('user_id', currentUser.id)
+          .limit(1);
+        if(error) throw error;
+        if(rows && rows.length){
+          fileData = rows[0].data || { people: [], categories: [], months: {} };
+        } else {
+          fileData = { people: [], categories: [], months: {} };
           needsSave = true;
         }
-      }
 
-      // Backfill per-month rows from the global months map if they are missing/empty.
-      const backfillMonths = [];
-      for(const [rawKey, monthData] of Object.entries(fileData.months || {})){
-        const key = normalizeMonthKey(rawKey);
-        const normalized = normalizeMonthData(monthData);
-        const existingRow = monthsRowMap[key];
-        if(shouldReplaceMonth(existingRow, normalized)){
-          monthsRowMap[key] = normalized;
-          backfillMonths.push(key);
-        }
-        if(rawKey !== key){
-          fileData.months[key] = normalized;
-          needsSave = true;
-        }
-      }
-      for(const key of backfillMonths){
-        await saveRemoteMonth(key, monthsRowMap[key]);
-      }
+        if(!fileData.people) fileData.people = [];
+        if(!fileData.categories) fileData.categories = [];
+        if(!fileData.months || typeof fileData.months !== 'object') fileData.months = {};
 
-      // Local storage fallback: prefer newer local data if remote is stale.
-      const localMonths = listSavedMonthsLocal();
-      const localUpdates = [];
-      for(const localKey of localMonths){
-        const localData = getLocalMonthData(localKey);
-        if(!localData) continue;
-        const key = normalizeMonthKey(localKey);
-        const existing = fileData.months[key];
-        if(isNewerMonthData(localData, existing)){
-          fileData.months[key] = localData;
-          localUpdates.push(key);
-          needsSave = true;
-        }
-      }
-      for(const key of localUpdates){
-        await saveRemoteMonth(key, fileData.months[key]);
-      }
-
-      // Migrate people/categories from month records if missing.
-      if(fileData.people.length === 0 && fileData.categories.length === 0){
-        const allPeople = new Set();
-        const allCategories = new Set();
-        for(const monthData of Object.values(fileData.months)){
-          if(monthData && typeof monthData === 'object'){
-            if(Array.isArray(monthData.people)){
-              monthData.people.forEach(p => allPeople.add(String(p).trim()));
-            }
-            if(Array.isArray(monthData.categories)){
-              monthData.categories.forEach(c => allCategories.add(String(c).trim()));
+        // Load legacy per-month rows if they exist and merge into months map.
+        const monthsRows = await fetchMonthsRows();
+        const monthsRowMap = {};
+        if(Array.isArray(monthsRows) && monthsRows.length){
+          for(const row of monthsRows){
+            const key = normalizeMonthKey(row?.month);
+            const incoming = row?.data ? normalizeMonthData(row.data) : null;
+            if(key && incoming){
+              monthsRowMap[key] = incoming;
             }
           }
         }
-        if(allPeople.size > 0 || allCategories.size > 0){
-          fileData.people = Array.from(allPeople).filter(Boolean);
-          fileData.categories = Array.from(allCategories).filter(Boolean);
-          needsSave = true;
+        for(const [key, incoming] of Object.entries(monthsRowMap)){
+          const existing = key ? fileData.months[key] : null;
+          if(key && incoming && shouldReplaceMonth(existing, incoming)){
+            fileData.months[key] = incoming;
+            needsSave = true;
+          }
         }
-      }
 
-      if(needsSave){
-        try{
+        // Backfill per-month rows from the global months map if they are missing/empty.
+        const backfillMonths = [];
+        for(const [rawKey, monthData] of Object.entries(fileData.months || {})){
+          const key = normalizeMonthKey(rawKey);
+          const normalized = normalizeMonthData(monthData);
+          const existingRow = monthsRowMap[key];
+          if(shouldReplaceMonth(existingRow, normalized)){
+            monthsRowMap[key] = normalized;
+            backfillMonths.push(key);
+          }
+          if(rawKey !== key){
+            fileData.months[key] = normalized;
+            needsSave = true;
+          }
+        }
+        for(const key of backfillMonths){
+          await saveRemoteMonth(key, monthsRowMap[key]);
+        }
+
+        // Local storage fallback: prefer newer local data if remote is stale.
+        const localMonths = listSavedMonthsLocal();
+        const localUpdates = [];
+        for(const localKey of localMonths){
+          const localData = getLocalMonthData(localKey);
+          if(!localData) continue;
+          const key = normalizeMonthKey(localKey);
+          const existing = fileData.months[key];
+          if(isNewerMonthData(localData, existing)){
+            fileData.months[key] = localData;
+            localUpdates.push(key);
+            needsSave = true;
+          }
+        }
+        for(const key of localUpdates){
+          await saveRemoteMonth(key, fileData.months[key]);
+        }
+
+        // Migrate people/categories from month records if missing.
+        if(fileData.people.length === 0 && fileData.categories.length === 0){
+          const allPeople = new Set();
+          const allCategories = new Set();
+          for(const monthData of Object.values(fileData.months)){
+            if(monthData && typeof monthData === 'object'){
+              if(Array.isArray(monthData.people)){
+                monthData.people.forEach(p => allPeople.add(String(p).trim()));
+              }
+              if(Array.isArray(monthData.categories)){
+                monthData.categories.forEach(c => allCategories.add(String(c).trim()));
+              }
+            }
+          }
+          if(allPeople.size > 0 || allCategories.size > 0){
+            fileData.people = Array.from(allPeople).filter(Boolean);
+            fileData.categories = Array.from(allCategories).filter(Boolean);
+            needsSave = true;
+          }
+        }
+
+        remoteLoadState = 'ready';
+        updateCloudStatus();
+        if(needsSave){
           await saveRemote();
-        }catch(err){
-          console.error('Failed to save remote data', err);
         }
+        return true;
+      }catch(err){
+        remoteLoadState = 'failed';
+        updateCloudStatus();
+        console.error('Failed to load remote data', err);
+        return false;
       }
     }
 
@@ -1358,22 +1550,63 @@
       return await fetchMonthRow(month);
     }
 
-    async function saveRemoteMonth(month, monthData){
-      await upsertMonthRow(month, monthData);
+    async function loadRemoteMonthStrict(month){
+      return await fetchMonthRow(month, true);
     }
 
-    async function saveRemote(){
+    async function fetchRemoteFileData(){
+      const { data: remoteRows, error: remoteError } = await withTimeout(
+        supabaseClient
+          .from('family_account_data')
+          .select('data')
+          .eq('user_id', currentUser.id)
+          .limit(1),
+        8000,
+        'Cloud safety check'
+      );
+      if(remoteError) throw remoteError;
+      return remoteRows?.[0]?.data || {};
+    }
+
+    async function saveRemoteMonth(month, monthData, options = {}){
+      const key = normalizeMonthKey(month);
+      const nextData = normalizeMonthData(monthData);
+      if(!options.allowEmptyOverwrite && !hasExpenses(nextData)){
+        const existing = await loadRemoteMonthStrict(key);
+        if(hasExpenses(existing)){
+          throw new Error(`Refused to overwrite ${key} in the cloud because the app has an empty month locally but Supabase has ${expenseCount(existing)} expenses.`);
+        }
+        const remoteFileData = await fetchRemoteFileData();
+        const globalExisting = normalizeMonthData(remoteFileData?.months?.[key]);
+        if(hasExpenses(globalExisting)){
+          throw new Error(`Refused to overwrite ${key} in the cloud because the app has an empty month locally but the main Supabase file has ${expenseCount(globalExisting)} expenses.`);
+        }
+      }
+      await upsertMonthRow(key, nextData);
+    }
+
+    async function saveRemote(options = {}){
       if(!supabaseClient || !currentUser) return;
+      if(remoteLoadState !== 'ready'){
+        throw new Error('Cloud data has not loaded, so upload was blocked.');
+      }
       // Capture fileData snapshot immediately to prevent corruption if fileData is reset during save
       const dataSnapshot = JSON.parse(JSON.stringify(fileData));
+      const remoteData = await fetchRemoteFileData();
+      storeCloudSafetyBackup(remoteData);
+      dataSnapshot.months = mergeProtectedMonths(remoteData.months || {}, dataSnapshot.months || {}, options);
       const payload = {
         user_id: currentUser.id,
         data: dataSnapshot,
         updated_at: new Date().toISOString()
       };
-      const { error } = await supabaseClient
-        .from('family_account_data')
-        .upsert(payload, { onConflict: 'user_id' });
+      const { error } = await withTimeout(
+        supabaseClient
+          .from('family_account_data')
+          .upsert(payload, { onConflict: 'user_id' }),
+        8000,
+        'Cloud save'
+      );
       if(error) throw error;
     }
 
@@ -1394,6 +1627,7 @@
         authStatus.textContent = 'Not signed in.';
       }
       setModeBadge();
+      updateCloudStatus();
     }
 
     // ---------- Month switching ----------
@@ -1414,8 +1648,13 @@
     // ---------- Public actions ----------
     function setMonthToNow(){ monthEl.value = thisMonthValue(); }
     function loadMonth(month){ loadFromFileOrLocal(month).then(()=>{ renderAll(); renderAverages(); }); }
+    function syncEntryDatesToMonth(){
+      const fallbackDate = dateValueFromMonth(monthEl.value);
+      if(quickDate && (!quickDate.value || !quickDate.value.startsWith(normalizeMonthKey(monthEl.value)))) quickDate.value = fallbackDate;
+      if(batchDate && (!batchDate.value || !batchDate.value.startsWith(normalizeMonthKey(monthEl.value)))) batchDate.value = fallbackDate;
+    }
 
-    async function save(){ setLastEditedNow(); await persist(); }
+    async function save(options = {}){ setLastEditedNow(); await persist(options); }
     async function addPerson(name){
       name = (name||'').trim(); if(!name) return; if((fileData.people||[]).includes(name)) return;
       (fileData.people = fileData.people||[]).push(name);
@@ -1610,11 +1849,12 @@
       const category = String(expense?.category || '').trim().toLowerCase();
       const note = String(expense?.note || '').trim().toLowerCase();
       const amount = round2(+expense?.amount || 0).toFixed(2);
+      const date = String(expense?.date || '').trim();
       const splits = Object.entries(expense?.splits || {})
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([person, pct]) => `${person}:${Number(pct) || 0}`)
         .join('|');
-      return [payer, category, note, amount, splits].join('::');
+      return [date, payer, category, note, amount, splits].join('::');
     }
     function getDuplicateGroups(){
       const expenses = data?.expenses || [];
@@ -1667,7 +1907,7 @@
       tableWrap.style.overflow = 'auto';
       const table = document.createElement('table');
       table.className = 'duplicate-table';
-      table.innerHTML = '<thead><tr><th>Delete?</th><th>#</th><th>Payer</th><th>Category</th><th>Note</th><th>Amount</th><th>Split</th></tr></thead><tbody></tbody>';
+      table.innerHTML = '<thead><tr><th>Delete?</th><th>#</th><th>Date</th><th>Payer</th><th>Category</th><th>Note</th><th>Amount</th><th>Split</th></tr></thead><tbody></tbody>';
       const tbody = table.querySelector('tbody');
       indexes.forEach((expenseIndex, position) => {
         const expense = expenses[expenseIndex];
@@ -1686,7 +1926,7 @@
         const deleteCell = document.createElement('td');
         deleteCell.appendChild(checkbox);
         row.appendChild(deleteCell);
-        [expenseIndex + 1, payer, expense.category || '', expense.note || '', euro(+expense.amount || 0), splitsToLabel(expense.splits || {[payer]:100})].forEach(value => {
+        [expenseIndex + 1, formatExpenseDate(expense.date), payer, expense.category || '', expense.note || '', euro(+expense.amount || 0), splitsToLabel(expense.splits || {[payer]:100})].forEach(value => {
           const td = document.createElement('td');
           td.textContent = value;
           row.appendChild(td);
@@ -1723,7 +1963,7 @@
       duplicateReview.appendChild(actions);
     }
     async function applyDuplicateDeletion(){
-      if(!duplicateReviewState) return;
+      if(!duplicateReviewState || duplicateDeleteInProgress) return;
       const currentGroup = duplicateReviewState.groups[duplicateReviewState.groupIndex] || [];
       const selectedInGroup = currentGroup.filter(index => duplicateReviewState.selected.has(index));
       if(!selectedInGroup.length){
@@ -1731,16 +1971,21 @@
         renderDuplicateReview();
         return;
       }
-      data.expenses = (data.expenses || []).filter((_, index) => !selectedInGroup.includes(index));
-      await save();
-      renderAll();
-      const remainingGroups = getDuplicateGroups();
-      if(!remainingGroups.length){
-        closeDuplicateReview('Selected duplicates deleted. No duplicate groups remain.');
-        return;
+      duplicateDeleteInProgress = true;
+      try{
+        data.expenses = (data.expenses || []).filter((_, index) => !selectedInGroup.includes(index));
+        await save();
+        renderAll();
+        const remainingGroups = getDuplicateGroups();
+        if(!remainingGroups.length){
+          closeDuplicateReview('Selected duplicates deleted. No duplicate groups remain.');
+          return;
+        }
+        duplicateReviewState = { groups:remainingGroups, groupIndex:0, selected:new Set() };
+        renderDuplicateReview();
+      } finally {
+        duplicateDeleteInProgress = false;
       }
-      duplicateReviewState = { groups:remainingGroups, groupIndex:0, selected:new Set() };
-      renderDuplicateReview();
     }
     async function checkDuplicateExpenses(){
       const expenses = data?.expenses || [];
@@ -1757,6 +2002,558 @@
       renderDuplicateReview();
     }
 
+    function normalizeText(value){
+      return String(value || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+    function parseImportAmount(value){
+      if(typeof value === 'number') return round2(Math.abs(value));
+      let cleaned = String(value || '')
+        .replace(/\u20ac/g, '')
+        .replace(/\s/g, '')
+        .replace(/[^\d.-]/g, '');
+      const raw = String(value || '').replace(/\u20ac/g, '').replace(/\s/g, '');
+      const lastComma = raw.lastIndexOf(',');
+      const lastDot = raw.lastIndexOf('.');
+      if(lastComma >= 0 && lastDot >= 0){
+        cleaned = lastComma > lastDot
+          ? raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '')
+          : raw.replace(/,/g, '').replace(/[^\d.-]/g, '');
+      } else if(lastComma >= 0){
+        cleaned = raw.replace(',', '.').replace(/[^\d.-]/g, '');
+      } else {
+        cleaned = raw.replace(/[^\d.-]/g, '');
+      }
+      const parsed = parseFloat(cleaned);
+      return Number.isFinite(parsed) ? round2(Math.abs(parsed)) : 0;
+    }
+    function parseImportSignedAmount(value){
+      if(typeof value === 'number') return round2(value);
+      const raw = String(value || '').replace(/\u20ac/g, '').replace(/\s/g, '');
+      const lastComma = raw.lastIndexOf(',');
+      const lastDot = raw.lastIndexOf('.');
+      let cleaned;
+      if(lastComma >= 0 && lastDot >= 0){
+        cleaned = lastComma > lastDot
+          ? raw.replace(/\./g, '').replace(',', '.').replace(/[^\d.-]/g, '')
+          : raw.replace(/,/g, '').replace(/[^\d.-]/g, '');
+      } else if(lastComma >= 0){
+        cleaned = raw.replace(',', '.').replace(/[^\d.-]/g, '');
+      } else {
+        cleaned = raw.replace(/[^\d.-]/g, '');
+      }
+      const parsed = parseFloat(cleaned);
+      return Number.isFinite(parsed) ? round2(parsed) : 0;
+    }
+    function parseImportDate(value, preferMonthFirst = false){
+      if(value instanceof Date && !isNaN(value)) return value;
+      if(typeof value === 'number' && window.XLSX?.SSF){
+        const parsed = XLSX.SSF.parse_date_code(value);
+        if(parsed) return new Date(parsed.y, parsed.m - 1, parsed.d);
+      }
+      const text = String(value || '').trim();
+      if(!text) return null;
+      const iso = /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/.exec(text);
+      if(iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+      const local = /^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})/.exec(text);
+      if(local){
+        const year = Number(local[3].length === 2 ? '20' + local[3] : local[3]);
+        const first = Number(local[1]);
+        const second = Number(local[2]);
+        const monthFirst = preferMonthFirst && first <= 12;
+        if(monthFirst || second > 12){
+          return new Date(year, first - 1, second);
+        }
+        return new Date(year, second - 1, first);
+      }
+      const parsed = new Date(text);
+      return isNaN(parsed) ? null : parsed;
+    }
+    function importDateToMonth(value, preferMonthFirst = false){
+      const date = parseImportDate(value, preferMonthFirst);
+      if(!date) return '';
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }
+    function getCategoryHistory(){
+      const history = {};
+      const rows = getAnalysisMonthRows();
+      for(const row of rows){
+        for(const expense of (row.data.expenses || [])){
+          const category = expense.category || '';
+          if(!category) continue;
+          const noteKey = normalizeText(expense.note || expense.description || '');
+          if(noteKey) history[noteKey] = category;
+        }
+      }
+      return history;
+    }
+    function suggestCategory(description){
+      const existing = fileData.categories || [];
+      const normalizedDescription = normalizeText(description);
+      if(!normalizedDescription) return { category:'', isNew:false, reason:'No description' };
+
+      const history = getCategoryHistory();
+      for(const [key, category] of Object.entries(history)){
+        if(key && (normalizedDescription.includes(key) || key.includes(normalizedDescription))){
+          return { category, isNew:false, reason:'Matched previous expense' };
+        }
+      }
+
+      for(const category of existing){
+        const normalizedCategory = normalizeText(category);
+        if(normalizedCategory && normalizedDescription.includes(normalizedCategory)){
+          return { category, isNew:false, reason:'Matched existing category name' };
+        }
+      }
+
+      const keywordRules = [
+        { keywords:['mercadona','aldi','lidl','supermercado','carrefour','dia','consum'], labels:['supermercado','groceries','food','provisiones'], fallback:'Groceries' },
+        { keywords:['farmacia','pharmacy'], labels:['farmacia','health','medical'], fallback:'Health' },
+        { keywords:['netflix','spotify','disney','hbo','prime'], labels:['subscription','subscriptions','streaming'], fallback:'Subscriptions' },
+        { keywords:['repsol','cepsa','gasolina','fuel','uber','cabify','taxi','metro','bus'], labels:['transport','travel','fuel'], fallback:'Transport' },
+        { keywords:['restaurante','restaurant','bar','cafe','cafeteria'], labels:['restaurant','restaurants','eating out','comer fuera'], fallback:'Restaurants' }
+      ];
+      for(const rule of keywordRules){
+        if(rule.keywords.some(keyword => normalizedDescription.includes(keyword))){
+          const existingMatch = existing.find(category => {
+            const normalizedCategory = normalizeText(category);
+            return rule.labels.some(label => normalizedCategory.includes(label));
+          });
+          return { category: existingMatch || rule.fallback, isNew: !existingMatch, reason: existingMatch ? 'Matched existing category by keyword' : 'Suggested new category by keyword' };
+        }
+      }
+
+      return { category:'Other', isNew: !existing.includes('Other'), reason:'No close match' };
+    }
+    function guessImportColumn(headers, names){
+      const normalizedNames = names.map(normalizeText);
+      return headers.find(header => {
+        const normalizedHeader = normalizeText(header);
+        return normalizedNames.some(name => normalizedHeader.includes(name));
+      }) || '';
+    }
+    function importColumnLabel(header){
+      const labels = {
+        A: 'A - Date',
+        B: 'B - Bank category',
+        C: 'C - Bank subcategory',
+        D: 'D - Payee/details',
+        E: 'E - Comment',
+        F: 'F - Amount',
+        G: 'G - Balance'
+      };
+      return labels[header] || header;
+    }
+    function fillColumnSelect(selectEl, headers, selected){
+      if(!selectEl) return;
+      selectEl.innerHTML = '';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = '— none —';
+      selectEl.appendChild(none);
+      for(const header of headers){
+        const option = document.createElement('option');
+        option.value = header;
+        option.textContent = importColumnLabel(header);
+        selectEl.appendChild(option);
+      }
+      selectEl.value = selected || '';
+    }
+    function parseCsv(text){
+      const rows = [];
+      let row = [], cell = '', inQuotes = false;
+      for(let i = 0; i < text.length; i++){
+        const char = text[i];
+        const next = text[i + 1];
+        if(char === '"' && inQuotes && next === '"'){ cell += '"'; i++; continue; }
+        if(char === '"'){ inQuotes = !inQuotes; continue; }
+        if(char === ',' && !inQuotes){ row.push(cell); cell = ''; continue; }
+        if((char === '\n' || char === '\r') && !inQuotes){
+          if(char === '\r' && next === '\n') i++;
+          row.push(cell); cell = '';
+          if(row.some(value => String(value).trim())) rows.push(row);
+          row = [];
+          continue;
+        }
+        cell += char;
+      }
+      row.push(cell);
+      if(row.some(value => String(value).trim())) rows.push(row);
+      const headers = (rows.shift() || []).map(header => String(header || '').trim());
+      return rows.map(values => Object.fromEntries(headers.map((header, index) => [header, values[index] || ''])));
+    }
+    function excelColumnName(index){
+      let name = '';
+      let n = index + 1;
+      while(n > 0){
+        const remainder = (n - 1) % 26;
+        name = String.fromCharCode(65 + remainder) + name;
+        n = Math.floor((n - 1) / 26);
+      }
+      return name;
+    }
+    function rowsToExcelColumnObjects(rows){
+      return rows.map(row => {
+        const obj = {};
+        for(let index = 0; index < 8; index++){
+          obj[excelColumnName(index)] = row[index] ?? '';
+        }
+        return obj;
+      });
+    }
+    function detectImportFormat(rows){
+      const hasIngHeader = rows.some(row =>
+        normalizeText(row.A).includes('f valor') &&
+        normalizeText(row.B).includes('categoria') &&
+        normalizeText(row.F).includes('importe')
+      );
+      return hasIngHeader ? 'ing-direct' : 'generic';
+    }
+    async function readImportFile(file){
+      const extension = file.name.split('.').pop().toLowerCase();
+      if(extension === 'csv'){
+        return parseCsv(await file.text());
+      }
+      if(!window.XLSX){
+        alert('Spreadsheet reader failed to load. Please check your internet connection and try again.');
+        return [];
+      }
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type:'array', cellDates:true });
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header:1, defval:'', blankrows:false, raw:false });
+      return rowsToExcelColumnObjects(rows);
+    }
+    async function handleImportFileChange(){
+      const file = importFile?.files?.[0];
+      if(!file) return;
+      importRowsRaw = await readImportFile(file);
+      importDraftRows = [];
+      if(!importRowsRaw.length){
+        alert('No rows found in that spreadsheet.');
+        return;
+      }
+      const headers = Object.keys(importRowsRaw[0] || {});
+      importDetectedFormat = detectImportFormat(importRowsRaw);
+      const isIngDirect = importDetectedFormat === 'ing-direct';
+      fillColumnSelect(importDateColumn, headers, isIngDirect ? 'A' : guessImportColumn(headers, ['date','fecha','transaction date']));
+      fillColumnSelect(importDescriptionColumn, headers, isIngDirect ? 'D' : guessImportColumn(headers, ['description','concepto','merchant','comercio','note','details']));
+      fillColumnSelect(importAmountColumn, headers, isIngDirect ? 'F' : guessImportColumn(headers, ['amount','importe','value','total']));
+      fillColumnSelect(importPayerColumn, headers, isIngDirect ? '' : guessImportColumn(headers, ['payer','person','paid by','pagador']));
+      fillSelect(importSamePayer, fileData.people || []);
+      if(importSamePayer){
+        importSamePayer.value = batchPerson.value || (fileData.people || [])[0] || '';
+      }
+      if(importUseSamePayer){
+        importUseSamePayer.checked = true;
+      }
+      if(importFormatNotice){
+        importFormatNotice.textContent = isIngDirect
+          ? 'Detected ING Direct movement export. The preview will use A as date, D/E as note, F as amount, and B/C to help suggest categories.'
+          : 'Generic spreadsheet mode. Choose the columns that match this bank export before previewing.';
+      }
+      if(importMapping) importMapping.style.display = 'block';
+      if(importPreview){ importPreview.style.display = 'none'; importPreview.innerHTML = ''; }
+    }
+    function defaultSplitValue(){
+      return 'equal';
+    }
+    function splitFromImportChoice(choice, payer){
+      const people = fileData.people || [];
+      if(choice === 'payer') return {[payer]:100};
+      if(!people.length) return payer ? {[payer]:100} : {};
+      const base = Math.floor(100 / people.length);
+      let remaining = 100;
+      const splits = {};
+      people.forEach((person, index) => {
+        const value = index === people.length - 1 ? remaining : base;
+        splits[person] = value;
+        remaining -= value;
+      });
+      return splits;
+    }
+    function updateCategorySuggestionsDatalist(){
+      if(!categorySuggestions) return;
+      categorySuggestions.innerHTML = '';
+      for(const category of (fileData.categories || [])){
+        const option = document.createElement('option');
+        option.value = category;
+        categorySuggestions.appendChild(option);
+      }
+    }
+    function buildImportDraftRows(){
+      const selectedMonth = normalizeMonthKey(monthEl.value);
+      const dateCol = importDateColumn.value;
+      const descriptionCol = importDescriptionColumn.value;
+      const amountCol = importAmountColumn.value;
+      const payerCol = importPayerColumn.value;
+      const isIngDirect = importDetectedFormat === 'ing-direct';
+      if(!descriptionCol || !amountCol){
+        alert('Please choose at least a description column and an amount column.');
+        return;
+      }
+      const useSamePayer = !!importUseSamePayer?.checked;
+      const defaultPayer = importSamePayer?.value || batchPerson.value || (fileData.people || [])[0] || '';
+      importDraftRows = importRowsRaw.map((row, sourceIndex) => {
+        const parsedDateValue = dateCol ? dateInputValueFromImport(row[dateCol], isIngDirect) : '';
+        const rowMonth = parsedDateValue ? parsedDateValue.slice(0, 7) : selectedMonth;
+        const rawDescription = String(row[descriptionCol] || '').trim();
+        const bankCategoryText = isIngDirect ? [row.B, row.C].map(value => String(value || '').trim()).filter(Boolean).join(' / ') : '';
+        const commentText = isIngDirect ? String(row.E || '').trim() : '';
+        const description = isIngDirect ? [rawDescription, commentText].filter(Boolean).join(' / ') : rawDescription;
+        const suggestionText = isIngDirect ? [bankCategoryText, rawDescription, commentText].filter(Boolean).join(' / ') : rawDescription;
+        const signedAmount = parseImportSignedAmount(row[amountCol]);
+        const amount = Math.abs(signedAmount);
+        const payer = useSamePayer ? defaultPayer : (payerCol ? String(row[payerCol] || '').trim() : defaultPayer);
+        const suggestion = suggestCategory(suggestionText);
+        return {
+          sourceIndex,
+          selected: !!description && amount > 0 && rowMonth === selectedMonth,
+          date: dateCol ? String(row[dateCol] || '') : '',
+          dateValue: parsedDateValue || dateValueFromMonth(selectedMonth),
+          month: rowMonth || selectedMonth,
+          signedAmount,
+          payer,
+          description,
+          amount,
+          category: suggestion.category,
+          categoryIsNew: suggestion.isNew,
+          reason: suggestion.reason,
+          splitChoice: defaultSplitValue()
+        };
+      }).filter(row => {
+        if(!row.description || row.amount <= 0) return false;
+        if(row.signedAmount >= 0) return false;
+        if(dateCol && !row.month) return false;
+        if(isIngDirect && normalizeText(row.date).includes('f valor')) return false;
+        if(row.month !== selectedMonth) return false;
+        return true;
+      });
+      renderImportPreview();
+    }
+    function renderImportStatusCell(cell, row){
+      if(!cell) return;
+      cell.textContent = row.categoryIsNew ? `New category needs confirmation: ${row.category || 'blank'}` : (row.reason || '');
+    }
+    function renderImportPreview(){
+      if(!importPreview) return;
+      updateCategorySuggestionsDatalist();
+      importPreview.style.display = 'block';
+      importPreview.innerHTML = '';
+      if(!importDraftRows.length){
+        importPreview.innerHTML = '<div class="muted">No rows to preview.</div>';
+        return;
+      }
+      const selectedMonth = normalizeMonthKey(monthEl.value);
+      const title = document.createElement('div');
+      title.className = 'import-preview-title';
+      title.textContent = `Preview for ${monthLabel(selectedMonth)}`;
+      importPreview.appendChild(title);
+
+      const list = document.createElement('div');
+      list.className = 'import-card-list';
+      importDraftRows.forEach((row, index) => {
+        const card = document.createElement('div');
+        card.className = 'import-card';
+        if(row.month !== selectedMonth) card.classList.add('import-row-muted');
+
+        const top = document.createElement('div');
+        top.className = 'import-card-top';
+
+        const selected = document.createElement('input');
+        selected.type = 'checkbox';
+        selected.checked = row.selected;
+        selected.addEventListener('change', () => { row.selected = selected.checked; });
+
+        const selectLabel = document.createElement('label');
+        selectLabel.className = 'import-select-row';
+        selectLabel.appendChild(selected);
+        const dateText = document.createElement('span');
+        dateText.textContent = row.date || '';
+        selectLabel.appendChild(dateText);
+        top.appendChild(selectLabel);
+
+        const amountInput = document.createElement('input');
+        amountInput.type = 'number';
+        amountInput.step = '0.01';
+        amountInput.value = row.amount;
+        amountInput.addEventListener('input', () => { row.amount = parseImportAmount(amountInput.value); });
+        top.appendChild(amountInput);
+        card.appendChild(top);
+
+        const description = document.createElement('div');
+        description.className = 'import-card-description';
+        description.textContent = row.description;
+        card.appendChild(description);
+
+        const fields = document.createElement('div');
+        fields.className = 'import-card-fields';
+
+        const payerField = document.createElement('div');
+        payerField.className = 'col';
+        const payerLabel = document.createElement('label');
+        payerLabel.textContent = 'Payer';
+        payerField.appendChild(payerLabel);
+
+        const payerSelect = document.createElement('select');
+        fillSelect(payerSelect, fileData.people || []);
+        payerSelect.value = row.payer;
+        payerSelect.disabled = !!importUseSamePayer?.checked;
+        payerSelect.addEventListener('change', () => { row.payer = payerSelect.value; });
+        payerField.appendChild(payerSelect);
+        fields.appendChild(payerField);
+
+        const categoryField = document.createElement('div');
+        categoryField.className = 'col';
+        const categoryLabel = document.createElement('label');
+        categoryLabel.textContent = 'Category';
+        categoryField.appendChild(categoryLabel);
+
+        const categorySelect = document.createElement('select');
+        fillSelect(categorySelect, fileData.categories || []);
+        const existingCategories = fileData.categories || [];
+        const suggestedIsNew = row.category && !existingCategories.includes(row.category);
+        if(suggestedIsNew){
+          const suggestedOption = document.createElement('option');
+          suggestedOption.value = row.category;
+          suggestedOption.textContent = `New: ${row.category}`;
+          categorySelect.appendChild(suggestedOption);
+        }
+        const customOption = document.createElement('option');
+        customOption.value = '__new__';
+        customOption.textContent = '+ New category...';
+        categorySelect.appendChild(customOption);
+        categorySelect.value = row.category || '';
+        const newCategoryInput = document.createElement('input');
+        newCategoryInput.type = 'text';
+        newCategoryInput.placeholder = 'New category';
+        newCategoryInput.style.display = 'none';
+        const syncCategory = () => {
+          if(categorySelect.value === '__new__'){
+            newCategoryInput.style.display = 'block';
+            row.category = newCategoryInput.value.trim();
+          } else {
+            newCategoryInput.style.display = 'none';
+            row.category = categorySelect.value;
+          }
+          row.categoryIsNew = !!row.category && !(fileData.categories || []).includes(row.category);
+          renderImportStatusCell(statusCell, row);
+        };
+        categorySelect.addEventListener('change', syncCategory);
+        newCategoryInput.addEventListener('input', syncCategory);
+        categoryField.appendChild(categorySelect);
+        categoryField.appendChild(newCategoryInput);
+        fields.appendChild(categoryField);
+
+        const splitField = document.createElement('div');
+        splitField.className = 'col';
+        const splitLabel = document.createElement('label');
+        splitLabel.textContent = 'Split';
+        splitField.appendChild(splitLabel);
+
+        const splitSelect = document.createElement('select');
+        [
+          {value:'equal', label:'Equal split'},
+          {value:'payer', label:'Payer only'}
+        ].forEach(optionConfig => {
+          const option = document.createElement('option');
+          option.value = optionConfig.value;
+          option.textContent = optionConfig.label;
+          splitSelect.appendChild(option);
+        });
+        splitSelect.value = row.splitChoice;
+        splitSelect.addEventListener('change', () => { row.splitChoice = splitSelect.value; });
+        splitField.appendChild(splitSelect);
+        fields.appendChild(splitField);
+
+        card.appendChild(fields);
+
+        const statusCell = document.createElement('div');
+        statusCell.className = 'import-card-status';
+        renderImportStatusCell(statusCell, row);
+        card.appendChild(statusCell);
+
+        list.appendChild(card);
+      });
+      importPreview.appendChild(list);
+
+      const actions = document.createElement('div');
+      actions.className = 'import-actions';
+      const importBtn = document.createElement('button');
+      importBtn.className = 'btn';
+      importBtn.type = 'button';
+      importBtn.textContent = 'Import selected';
+      importBtn.addEventListener('click', importSelectedRows);
+      const selectAllBtn = document.createElement('button');
+      selectAllBtn.className = 'btn ghost';
+      selectAllBtn.type = 'button';
+      selectAllBtn.textContent = 'Select all shown';
+      selectAllBtn.addEventListener('click', () => {
+        importDraftRows.forEach(row => { if(row.month === selectedMonth) row.selected = true; });
+        renderImportPreview();
+      });
+      actions.appendChild(importBtn);
+      actions.appendChild(selectAllBtn);
+      importPreview.appendChild(actions);
+    }
+    async function importSelectedRows(){
+      if(importInProgress) return;
+      const selectedMonth = normalizeMonthKey(monthEl.value);
+      const rows = importDraftRows.filter(row => row.selected && row.month === selectedMonth && row.amount > 0);
+      if(!rows.length){
+        alert('No valid rows are selected for this month.');
+        return;
+      }
+      const newCategories = uniqueList(rows.map(row => row.category).filter(category => category && !(fileData.categories || []).includes(category)));
+      if(newCategories.length){
+        const message = `These new categories will be added:\n\n${newCategories.join('\n')}\n\nContinue?`;
+        if(!confirm(message)) return;
+        fileData.categories = uniqueList([...(fileData.categories || []), ...newCategories]);
+        saveGlobalToLocal();
+      }
+      const missingPayer = rows.find(row => !row.payer);
+      if(missingPayer){
+        alert('Every imported row needs a payer. Please choose a payer in the preview.');
+        return;
+      }
+      const missingCategory = rows.find(row => !row.category);
+      if(missingCategory){
+        alert('Every imported row needs a category. Please choose a category in the preview.');
+        return;
+      }
+      importInProgress = true;
+      try{
+        for(const row of rows){
+          (data.expenses = data.expenses || []).push({
+            date: row.dateValue || dateValueFromMonth(selectedMonth),
+            payer: row.payer,
+            category: row.category || 'Other',
+            amount: round2(row.amount),
+            note: row.description,
+            splits: splitFromImportChoice(row.splitChoice, row.payer)
+          });
+        }
+        await save();
+        importDraftRows = importDraftRows.filter(row => !rows.includes(row));
+        renderAll();
+        renderImportPreview();
+        alert(`Imported ${rows.length} ${rows.length === 1 ? 'expense' : 'expenses'}.`);
+      } finally {
+        importInProgress = false;
+      }
+    }
+    function clearImport(){
+      importRowsRaw = [];
+      importDraftRows = [];
+      if(importFile) importFile.value = '';
+      if(importMapping) importMapping.style.display = 'none';
+      if(importPreview){ importPreview.style.display = 'none'; importPreview.innerHTML = ''; }
+    }
+
     async function addQuickExpenses(){
       const payer = quickPerson.value;
       const category = quickCategory.value;
@@ -1765,7 +2562,8 @@
       if(!amounts.length){ alert('Add at least one amount'); return; }
       const note = document.getElementById('quickNote') ? document.getElementById('quickNote').value.trim() : '';
       const splits = getSplitsFromSliders(quickSplitSliders);
-      for(const a of amounts){ if(a<=0) continue; (data.expenses = data.expenses||[]).push({payer, category, amount: round2(+a), note, splits}); }
+      const date = quickDate?.value || dateValueFromMonth(monthEl.value);
+      for(const a of amounts){ if(a<=0) continue; (data.expenses = data.expenses||[]).push({date, payer, category, amount: round2(+a), note, splits}); }
       await save(); renderAll(); quickAmounts.value='';
     }
 
@@ -1796,7 +2594,8 @@
       const note=(noteInput?.value||'').trim();
       if(!cat){ alert('Please select a category'); return; }
       if(!isFinite(val) || val<=0){ alert('Please enter a valid amount'); return; }
-      (data.expenses = data.expenses||[]).push({payer, category:cat, amount: round2(val), note, splits});
+      const date = batchDate?.value || dateValueFromMonth(monthEl.value);
+      (data.expenses = data.expenses||[]).push({date, payer, category:cat, amount: round2(val), note, splits});
       await save();
       renderAll();
       categorySelect.value='';
@@ -1864,8 +2663,10 @@
           currentSession = session || null;
           currentUser = currentSession?.user || null;
           if(currentUser){
-            await loadRemote();
-            await loadFromFileOrLocal(monthEl.value);
+            const loaded = await loadRemote();
+            if(loaded){
+              await loadFromFileOrLocal(monthEl.value);
+            }
           }
           updateAuthStatus();
           renderAll();
@@ -1882,19 +2683,24 @@
       }
       const initial = thisMonthValue();
       monthEl.value = initial;
+      syncEntryDatesToMonth();
       if(currentUser){
-        await loadRemote();
+        const loaded = await loadRemote();
+        if(loaded){
+          await loadFromFileOrLocal(initial);
+        }
       } else {
         // Load global people/categories from local storage if not using Supabase
         loadGlobalFromLocal();
+        await loadFromFileOrLocal(initial);
       }
-      await loadFromFileOrLocal(initial);
       lastLoadedMonth = initial;
       loadTheme();
       setupCollapsibles();
       renderAll();
       renderAverages();
       updateAuthStatus();
+      updateCloudStatus();
       if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
 
       if(analysisView) analysisView.addEventListener('change', renderAverages);
@@ -1904,6 +2710,7 @@
       monthEl.addEventListener('change', async ()=>{
         const target = monthEl.value;
         await switchMonthSafely(target);
+        syncEntryDatesToMonth();
         buildSplitSliders(quickSplitSliders);
         buildSplitSliders(batchSplitSliders);
       });
@@ -1919,13 +2726,17 @@
       });
 
       modeQuickBtn.addEventListener('click', ()=>{
-        modeQuickBtn.classList.add('active'); modeBatchBtn.classList.remove('active');
-        quickPanel.style.display='block'; batchPanel.style.display='none';
+        modeQuickBtn.classList.add('active'); modeBatchBtn.classList.remove('active'); modeImportBtn.classList.remove('active');
+        quickPanel.style.display='block'; batchPanel.style.display='none'; importPanel.style.display='none';
       });
       modeBatchBtn.addEventListener('click', ()=>{
-        modeBatchBtn.classList.add('active'); modeQuickBtn.classList.remove('active');
-        quickPanel.style.display='none'; batchPanel.style.display='block';
+        modeBatchBtn.classList.add('active'); modeQuickBtn.classList.remove('active'); modeImportBtn.classList.remove('active');
+        quickPanel.style.display='none'; batchPanel.style.display='block'; importPanel.style.display='none';
         if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
+      });
+      modeImportBtn.addEventListener('click', ()=>{
+        modeImportBtn.classList.add('active'); modeBatchBtn.classList.remove('active'); modeQuickBtn.classList.remove('active');
+        quickPanel.style.display='none'; batchPanel.style.display='none'; importPanel.style.display='block';
       });
 
       addQuickBtn.addEventListener('click', addQuickExpenses);
@@ -1936,11 +2747,37 @@
       clearMonthBtn.addEventListener('click', async ()=>{
         const msg = "Are you sure you want to delete this month's expenses? You won't be able to get them back.";
         if(confirm(msg)){
-          data.expenses = []; await save(); renderAll();
+          const secondMsg = `This will also delete ${monthLabel(monthEl.value)} from the cloud if you are signed in. Type DELETE to confirm.`;
+          if(currentUser && prompt(secondMsg) !== 'DELETE') return;
+          data.expenses = [];
+          await save({ allowEmptyOverwrite: true });
+          renderAll();
         }
       });
       if(checkDuplicatesBtn){
         checkDuplicatesBtn.addEventListener('click', checkDuplicateExpenses);
+      }
+      if(importFile){
+        importFile.addEventListener('change', handleImportFileChange);
+      }
+      if(buildImportPreviewBtn){
+        buildImportPreviewBtn.addEventListener('click', buildImportDraftRows);
+      }
+      if(clearImportBtn){
+        clearImportBtn.addEventListener('click', clearImport);
+      }
+      if(importUseSamePayer){
+        importUseSamePayer.addEventListener('change', () => {
+          if(importDraftRows.length) buildImportDraftRows();
+        });
+      }
+      if(importSamePayer){
+        importSamePayer.addEventListener('change', () => {
+          if(importUseSamePayer?.checked && importDraftRows.length) buildImportDraftRows();
+        });
+      }
+      if(saveCloudBtn){
+        saveCloudBtn.addEventListener('click', syncCloudNow);
       }
 
       signInBtn.addEventListener('click', async ()=>{
@@ -1974,7 +2811,11 @@
             currentUser = signInData.session.user;
           }
           await refreshSession();
-          await loadRemote();
+          const loaded = await loadRemote();
+          if(!loaded){
+            showAuthMessage('Signed in, but cloud data could not be loaded. Uploads are blocked so existing cloud data is protected.', 'error');
+            return;
+          }
           await loadFromFileOrLocal(monthEl.value);
           updateAuthStatus();
           renderAll();
@@ -2034,6 +2875,13 @@
       signOutBtn.addEventListener('click', async ()=>{
         if(!supabaseClient){ return; }
         hideAuthMessage();
+        if(currentUser && cloudSavePending){
+          const shouldSync = confirm('You have local changes that may not be saved to cloud yet. Save to cloud before signing out?');
+          if(shouldSync){
+            const synced = await syncCloudNow();
+            if(!synced) return;
+          }
+        }
         setButtonLoading(signOutBtn, true);
         let signOutError = null;
         try {

@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Family Accounts Local Recovery</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      background: #f7f7f7;
+      color: #161616;
+    }
+    main {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0 0 8px;
+    }
+    .note {
+      color: #5f6368;
+      line-height: 1.45;
+      margin-bottom: 16px;
+    }
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: #2563eb;
+      color: white;
+      font-size: 16px;
+      padding: 10px 14px;
+    }
+    button.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      margin-top: 16px;
+    }
+    th,
+    td {
+      border-bottom: 1px solid #e5e7eb;
+      padding: 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f3f4f6;
+    }
+    textarea {
+      width: 100%;
+      min-height: 260px;
+      margin-top: 16px;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    .ok {
+      color: #0f7a3b;
+      font-weight: bold;
+    }
+    .empty {
+      color: #9a3412;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Family Accounts Local Recovery</h1>
+    <p class="note">
+      This page only reads local storage for this exact website address. It does
+      not load Supabase, does not sign in, and does not sync anything.
+    </p>
+    <div class="actions">
+      <button id="refreshBtn" type="button">Refresh local data</button>
+      <button id="copyBtn" class="secondary" type="button">Copy export</button>
+      <button id="downloadBtn" class="secondary" type="button">Download export</button>
+    </div>
+    <div id="summary" class="note"></div>
+    <table>
+      <thead>
+        <tr>
+          <th>Month</th>
+          <th>Expenses</th>
+          <th>Last edited</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="monthsBody"></tbody>
+    </table>
+    <textarea id="exportBox" readonly></textarea>
+  </main>
+
+  <script>
+    const monthsBody = document.getElementById('monthsBody');
+    const exportBox = document.getElementById('exportBox');
+    const summary = document.getElementById('summary');
+
+    function readRecoveryData(){
+      const exportData = {
+        exportedAt: new Date().toISOString(),
+        origin: location.origin,
+        items: {}
+      };
+
+      const rows = [];
+      Object.keys(localStorage)
+        .filter(key => key.startsWith('famacct:'))
+        .sort()
+        .forEach(key => {
+          const raw = localStorage.getItem(key);
+          exportData.items[key] = raw;
+          if(/^famacct:\d{4}-\d{2}$/.test(key)){
+            let parsed = {};
+            try{
+              parsed = JSON.parse(raw || '{}');
+            }catch{}
+            const expenses = Array.isArray(parsed.expenses) ? parsed.expenses.length : 0;
+            rows.push({
+              month: key.replace('famacct:', ''),
+              expenses,
+              lastEdited: parsed.lastEdited || '',
+              status: expenses > 0 ? 'Has data' : 'Empty'
+            });
+          }
+        });
+
+      return { exportData, rows };
+    }
+
+    function render(){
+      const { exportData, rows } = readRecoveryData();
+      monthsBody.innerHTML = '';
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td>${row.month}</td>
+          <td>${row.expenses}</td>
+          <td>${row.lastEdited}</td>
+          <td class="${row.expenses > 0 ? 'ok' : 'empty'}">${row.status}</td>
+        `;
+        monthsBody.appendChild(tr);
+      });
+
+      const populated = rows.filter(row => row.expenses > 0);
+      summary.textContent = `Found ${rows.length} local month records. ${populated.length} have expenses.`;
+      exportBox.value = JSON.stringify(exportData, null, 2);
+    }
+
+    document.getElementById('refreshBtn').addEventListener('click', render);
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      await navigator.clipboard.writeText(exportBox.value);
+      alert('Recovery export copied.');
+    });
+    document.getElementById('downloadBtn').addEventListener('click', () => {
+      const blob = new Blob([exportBox.value], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `family-accounts-local-recovery-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    render();
+  </script>
+</body>
+</html>

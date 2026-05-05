@@ -207,6 +207,10 @@
       background:var(--error);
     }
     .btn.warn:hover{background:#b91c1c}
+    .btn.compact{
+      padding:6px 10px;
+      font-size:12px;
+    }
 
     .chips{display:flex;gap:8px;flex-wrap:wrap}
     .chip{
@@ -302,6 +306,87 @@
       height:18px;
     }
     .duplicate-actions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-top:12px;
+    }
+    .import-panel,
+    .import-preview{
+      margin-top:12px;
+    }
+    .import-preview-title{
+      font-weight:700;
+      margin-bottom:10px;
+    }
+    .import-card-list{display:flex;flex-direction:column;gap:10px}
+    .import-card{
+      border:1px solid var(--border);
+      border-radius:8px;
+      background:var(--row-bg);
+      padding:12px;
+    }
+    .import-card-top{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      margin-bottom:8px;
+    }
+    .import-card-top input[type="number"]{
+      width:130px;
+      flex:0 0 130px;
+    }
+    .import-select-row{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      margin:0;
+      color:var(--text-muted);
+      font-size:13px;
+      font-weight:700;
+    }
+    .import-select-row input{
+      width:18px;
+      height:18px;
+    }
+    .import-card-description{
+      color:var(--text);
+      font-weight:700;
+      margin-bottom:10px;
+      line-height:1.4;
+    }
+    .import-card-fields{
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
+      gap:10px;
+    }
+    .import-card-fields input,
+    .import-card-fields select{
+      width:100%;
+    }
+    .import-card-status{
+      margin-top:8px;
+      color:var(--text-muted);
+      font-size:12px;
+      font-weight:600;
+    }
+    .import-same-payer{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      font-size:13px;
+      font-weight:600;
+      margin:0;
+    }
+    .import-same-payer input{
+      width:18px;
+      height:18px;
+    }
+    .import-row-muted{
+      opacity:0.55;
+    }
+    .import-actions{
       display:flex;
       gap:10px;
       flex-wrap:wrap;
@@ -462,6 +547,8 @@
       .expense-controls-row .split-col{flex:1 1 100%;min-width:0}
       .two-person-split{grid-template-columns:1fr;gap:8px}
       .two-person-split .split-right{text-align:left}
+      .import-card-top{align-items:flex-start}
+      .import-card-top input[type="number"]{width:110px;flex-basis:110px}
       .split-slider-row label{flex:0 0 70px;font-size:12px}
       .split-slider-row .split-value{flex:0 0 40px;font-size:13px}
     }
