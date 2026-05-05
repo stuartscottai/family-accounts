@@ -156,3 +156,120 @@ select
   updated_at
 from public.family_account_months
 order by month desc;
+
+-- ============================================================================
+-- Backup history table
+-- This table is optional for the app to run, but strongly recommended.
+-- It keeps a history row whenever account/month data is inserted, updated,
+-- or deleted. This is the recovery layer for accidental overwrites.
+-- ============================================================================
+
+create table if not exists public.family_account_backups (
+  id bigserial primary key,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  source_table text not null,
+  source_month text,
+  operation text not null,
+  old_data jsonb,
+  new_data jsonb,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists family_account_backups_user_created_idx
+on public.family_account_backups (user_id, created_at desc);
+
+create index if not exists family_account_backups_month_idx
+on public.family_account_backups (user_id, source_month, created_at desc);
+
+alter table public.family_account_backups enable row level security;
+
+drop policy if exists "Users can read their own backups" on public.family_account_backups;
+
+create policy "Users can read their own backups"
+on public.family_account_backups
+for select
+to public
+using (auth.uid() = user_id);
+
+create or replace function public.backup_family_account_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  backup_user_id uuid;
+  backup_month text;
+begin
+  backup_user_id := coalesce(new.user_id, old.user_id);
+
+  if tg_table_name = 'family_account_months' then
+    backup_month := coalesce(new.month, old.month);
+  else
+    backup_month := null;
+  end if;
+
+  insert into public.family_account_backups (
+    user_id,
+    source_table,
+    source_month,
+    operation,
+    old_data,
+    new_data
+  )
+  values (
+    backup_user_id,
+    tg_table_name,
+    backup_month,
+    tg_op,
+    case when tg_op in ('UPDATE', 'DELETE') then to_jsonb(old) else null end,
+    case when tg_op in ('INSERT', 'UPDATE') then to_jsonb(new) else null end
+  );
+
+  if tg_op = 'DELETE' then
+    return old;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists backup_family_account_data_insert on public.family_account_data;
+drop trigger if exists backup_family_account_data_update on public.family_account_data;
+drop trigger if exists backup_family_account_data_delete on public.family_account_data;
+
+create trigger backup_family_account_data_insert
+after insert on public.family_account_data
+for each row
+execute function public.backup_family_account_change();
+
+create trigger backup_family_account_data_update
+after update on public.family_account_data
+for each row
+when (old.data is distinct from new.data)
+execute function public.backup_family_account_change();
+
+create trigger backup_family_account_data_delete
+after delete on public.family_account_data
+for each row
+execute function public.backup_family_account_change();
+
+drop trigger if exists backup_family_account_months_insert on public.family_account_months;
+drop trigger if exists backup_family_account_months_update on public.family_account_months;
+drop trigger if exists backup_family_account_months_delete on public.family_account_months;
+
+create trigger backup_family_account_months_insert
+after insert on public.family_account_months
+for each row
+execute function public.backup_family_account_change();
+
+create trigger backup_family_account_months_update
+after update on public.family_account_months
+for each row
+when (old.data is distinct from new.data)
+execute function public.backup_family_account_change();
+
+create trigger backup_family_account_months_delete
+after delete on public.family_account_months
+for each row
+execute function public.backup_family_account_change();

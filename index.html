@@ -17,52 +17,114 @@
 <body>
   <div class="wrap">
     <div class="header">
+      <nav class="app-nav" id="appNav" aria-label="Main navigation">
+        <button type="button" data-target-view="home" class="active">Home</button>
+        <button type="button" data-target-view="add">Add</button>
+        <button type="button" data-target-view="review">Review</button>
+        <button type="button" data-target-view="settle">Settle</button>
+        <button type="button" data-target-view="analysis">Analysis</button>
+        <button type="button" data-target-view="account">Account</button>
+        <button type="button" data-target-view="settings">Settings</button>
+        <div class="menu-auth-actions">
+          <button type="button" id="mobileMenuSignInBtn">Sign in</button>
+          <button type="button" id="mobileMenuSignOutBtn">Sign out</button>
+        </div>
+      </nav>
       <div class="title">
         <div class="logo"><img src="public/favicon-32.png" alt="Family Accounts logo" /></div>
         <span>Family Accounts</span>
       </div>
-      <div class="header-right">
+      <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open menu" aria-expanded="false">&#9776;</button>
+    </div>
+      <div class="status-panel">
         <span id="modeBadge">Local storage</span>
         <span>•</span>
         <span id="cloudSyncStatus">Cloud: not signed in</span>
         <span>•</span>
         <span>Last edited: <span id="lastEdited">—</span></span>
       </div>
-    </div>
 
     <div class="stack" style="margin-top:14px">
+      <div class="card" data-section="home">
+        <div class="card-header"><div class="card-title">Home</div><div class="chev">â–¸</div></div>
+        <div class="card-content">
+          <div class="home-summary">
+            <div class="analysis-metric"><div class="muted">Month</div><div class="big" id="homeMonthLabel">-</div></div>
+            <div class="analysis-metric"><div class="muted">Monthly total</div><div class="big" id="homeMonthlyTotal">0.00 EUR</div></div>
+            <div class="analysis-metric"><div class="muted">Entries</div><div class="big" id="homeEntryCount">0</div></div>
+          </div>
+          <div class="home-actions">
+            <button class="btn" type="button" data-target-view="add">Add expenses</button>
+            <button class="btn ghost" type="button" data-target-view="review">Review expenses</button>
+            <button class="btn ghost" type="button" data-target-view="settle">Settle up</button>
+            <button class="btn ghost" type="button" data-target-view="analysis">Analyse spending</button>
+            <button class="btn ghost" type="button" data-target-view="account">Manage account</button>
+          </div>
+        </div>
+      </div>
       <div class="card" data-section="auth">
-        <div class="card-header"><div class="card-title">Account</div><div class="chev">▸</div></div>
+        <div class="card-header"><div class="card-title" id="accountCardTitle">Sign in</div><div class="chev">▸</div></div>
         <div class="card-content">
           <div id="authMessage" style="display:none;padding:12px;border-radius:12px;margin-bottom:12px"></div>
-          <div class="row" style="justify-content:space-between;align-items:center">
-            <div class="col">
-              <label for="themeToggle">Dark mode</label>
+          <div class="account-section" id="accountLoginSection">
+            <div class="account-section-title" id="accountSectionTitle">Sign in</div>
+            <div class="row">
+              <div class="col" style="flex:1;min-width:220px">
+                <label for="authEmail">Email</label>
+                <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" />
+              </div>
+              <div class="col" style="flex:1;min-width:220px">
+                <label for="authPassword">Password</label>
+                <input id="authPassword" type="password" autocomplete="current-password" placeholder="password" />
+              </div>
             </div>
-            <label class="switch">
-              <input id="themeToggle" type="checkbox" />
-              <span class="slider"></span>
-            </label>
-          </div>
-          <div class="row">
-            <div class="col" style="flex:1;min-width:220px">
-              <label for="authEmail">Email</label>
-              <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" />
+            <div class="row">
+              <button class="btn" id="signInBtn" type="button">Sign in</button>
+              <button class="btn alt" id="signUpBtn" type="button">Sign up</button>
+              <button class="btn ghost" id="forgotPasswordBtn" type="button">Forgot password</button>
+              <button class="btn ghost" id="signOutBtn" type="button">Sign out</button>
             </div>
-            <div class="col" style="flex:1;min-width:220px">
-              <label for="authPassword">Password</label>
-              <input id="authPassword" type="password" autocomplete="current-password" placeholder="••••••••" />
+            <div class="note" id="authStatus">Not signed in.</div>
+          </div>
+
+          <div class="account-section signed-in-only">
+            <div class="account-section-title">Cloud sync</div>
+            <div class="row">
+              <button class="btn" id="saveCloudBtn" type="button">Save to cloud</button>
+              <button class="btn ghost" id="retryCloudBtn" type="button">Retry cloud sync</button>
+            </div>
+            <div class="cloud-detail" id="cloudStatusDetail">Cloud saves are disabled until you sign in.</div>
+          </div>
+
+          <div class="account-section signed-in-only">
+            <div class="account-section-title">Data safety</div>
+            <div class="row">
+              <button class="btn ghost" id="exportDataBtn" type="button">Export all data</button>
+            </div>
+            <details class="advanced-tools">
+              <summary>Advanced recovery tools</summary>
+              <div class="row">
+                <button class="btn ghost" id="loadBackupsBtn" type="button">Load recent backups</button>
+                <button class="btn ghost" id="migrateDatesBtn" type="button">Add estimated dates to old expenses</button>
+              </div>
+              <div class="note">Backup restore uses the Supabase backup history table. Estimated dates only affect older expenses with no date; they are set to the first day of their month.</div>
+              <div id="backupStatus" class="note"></div>
+              <div id="backupList" class="backup-list"></div>
+            </details>
+          </div>
+
+          <div class="account-section signed-in-only">
+            <div class="account-section-title">Display</div>
+            <div class="row" style="justify-content:space-between;align-items:center">
+              <div class="col">
+                <label for="themeToggle">Dark mode</label>
+              </div>
+              <label class="switch">
+                <input id="themeToggle" type="checkbox" />
+                <span class="slider"></span>
+              </label>
             </div>
           </div>
-          <div class="row">
-            <button class="btn" id="signInBtn" type="button">Sign in</button>
-            <button class="btn alt" id="signUpBtn" type="button">Sign up</button>
-            <button class="btn ghost" id="forgotPasswordBtn" type="button">Forgot password</button>
-            <button class="btn ghost" id="signOutBtn" type="button">Sign out</button>
-            <button class="btn ghost" id="saveCloudBtn" type="button">Save to cloud</button>
-          </div>
-          <div class="note" id="authStatus">Not signed in.</div>
-          <div class="note" style="margin-top:8px">Sign up requires email confirmation (min. 6 characters password). Your data syncs to the cloud when signed in.</div>
         </div>
       </div>
 
@@ -291,6 +353,22 @@
       </div>
 
       <div class="footer">stuartscottAI</div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="expenseDetailModal" style="display:none">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="expenseDetailTitle">
+      <div class="modal-header">
+        <div class="card-title" id="expenseDetailTitle">Expense details</div>
+        <button class="btn ghost compact" id="closeExpenseDetailBtn" type="button">Close</button>
+      </div>
+      <div id="expenseDetailBody"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="editExpenseDetailBtn" type="button">Edit</button>
+        <button class="btn" id="saveExpenseDetailBtn" type="button" style="display:none">Save changes</button>
+        <button class="btn ghost" id="cancelExpenseEditBtn" type="button" style="display:none">Cancel</button>
+        <button class="btn warn" id="deleteExpenseDetailBtn" type="button">Delete expense</button>
+      </div>
     </div>
   </div>
 

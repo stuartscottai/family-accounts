@@ -64,15 +64,17 @@
     /* Header */
     .header{
       display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
-      padding:16px 20px;margin-bottom:24px;
+      padding:16px 20px;margin-bottom:10px;
       background:var(--card-bg);
       border:1px solid var(--border);
       border-radius:12px;
     }
     .title{
+      order:1;
       font-size:22px;font-weight:700;
       color:var(--text);
       display:flex;align-items:center;gap:10px;
+      flex:0 0 auto;
     }
     .logo{
       width:32px;height:32px;
@@ -96,14 +98,106 @@
     .switch input:checked + .slider{background:var(--accent)}
     .switch input:checked + .slider:before{transform:translateX(20px)}
 
-    .header-right{
-      display:flex;align-items:center;gap:8px;
-      color:var(--text-muted);font-size:12px;
+    .status-panel{
+      display:flex;
+      align-items:center;
+      gap:8px;
       flex-wrap:wrap;
+      padding:10px 14px;
+      margin-bottom:14px;
+      background:var(--card-bg);
+      border:1px solid var(--border);
+      border-radius:10px;
+      color:var(--text-muted);
+      font-size:12px;
     }
+    .menu-toggle{
+      order:2;
+      display:none;
+      border:1px solid var(--border);
+      background:var(--card-bg);
+      color:var(--text);
+      border-radius:8px;
+      padding:8px 10px;
+      min-width:42px;
+      font:inherit;
+      font-size:20px;
+      line-height:1;
+      font-weight:700;
+      cursor:pointer;
+    }
+    .menu-toggle[hidden]{display:none !important}
 
     .small{font-size:11px;color:var(--text-muted)}
     .stack{display:flex;flex-direction:column;gap:16px}
+    .app-nav{
+      order:2;
+      display:flex;
+      gap:4px;
+      flex-wrap:nowrap;
+      flex:1 1 360px;
+      justify-content:flex-end;
+      width:auto;
+      margin-bottom:0;
+      padding:0;
+      border:0;
+      border-radius:0;
+      background:transparent;
+    }
+    .app-nav button{
+      border:1px solid transparent;
+      background:transparent;
+      color:var(--text-muted);
+      border-radius:8px;
+      padding:7px 9px;
+      font:inherit;
+      font-size:12px;
+      font-weight:700;
+      cursor:pointer;
+      white-space:nowrap;
+    }
+    .app-nav button.active{
+      background:var(--accent);
+      color:white;
+      border-color:var(--accent);
+    }
+    .app-nav.signed-out > button[data-target-view]:not([data-target-view="account"]){
+      display:none;
+    }
+    .menu-auth-actions{
+      display:none;
+    }
+    .view-hidden{display:none !important}
+    .home-summary{
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));
+      gap:12px;
+      margin-bottom:14px;
+    }
+    .home-actions{
+      display:grid;
+      grid-template-columns:repeat(auto-fit, minmax(160px, 1fr));
+      gap:10px;
+    }
+    .account-section{
+      padding:14px;
+      border:1px solid var(--border);
+      border-radius:8px;
+      background:var(--row-bg);
+      margin-bottom:14px;
+    }
+    .account-section:last-child{
+      margin-bottom:0;
+    }
+    .account-section-title{
+      font-size:13px;
+      font-weight:700;
+      color:var(--text);
+      margin-bottom:10px;
+    }
+    .advanced-tools{
+      margin-top:12px;
+    }
 
     /* Clean Cards */
     .card{
@@ -135,7 +229,8 @@
       white-space:nowrap;
     }
     .chev{
-      display:inline-flex;align-items:center;justify-content:center;
+      display:none;
+      align-items:center;justify-content:center;
       width:24px;height:24px;transition:transform 0.2s ease;
       color:var(--text-muted);font-size:14px;
     }
@@ -210,6 +305,84 @@
     .btn.compact{
       padding:6px 10px;
       font-size:12px;
+    }
+    .expense-row{
+      cursor:pointer;
+    }
+    .expense-row:focus{
+      outline:2px solid var(--accent);
+      outline-offset:-2px;
+    }
+    .modal-overlay{
+      position:fixed;
+      inset:0;
+      z-index:50;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:16px;
+      background:rgba(15, 23, 42, 0.45);
+    }
+    .modal{
+      width:min(520px, 100%);
+      max-height:90vh;
+      overflow:auto;
+      background:var(--card-bg);
+      border:1px solid var(--border);
+      border-radius:12px;
+      box-shadow:0 20px 60px rgba(15, 23, 42, 0.25);
+    }
+    .modal-header{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:12px;
+      padding:16px;
+      border-bottom:1px solid var(--border);
+    }
+    #expenseDetailBody{
+      padding:16px;
+    }
+    #expenseDetailBody table{
+      margin:0;
+    }
+    #expenseDetailBody th{
+      width:120px;
+      color:var(--text-muted);
+    }
+    #expenseDetailBody td{
+      overflow-wrap:anywhere;
+      word-break:break-word;
+    }
+    .modal-actions{
+      display:flex;
+      justify-content:flex-end;
+      gap:10px;
+      flex-wrap:wrap;
+      padding:0 16px 16px;
+    }
+    .expense-edit-grid{
+      display:grid;
+      grid-template-columns:repeat(2, minmax(0, 1fr));
+      gap:12px;
+    }
+    .expense-edit-wide{
+      grid-column:1 / -1;
+    }
+    .expense-edit-splits{
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+    .expense-edit-split{
+      display:grid;
+      grid-template-columns:minmax(90px, 1fr) 96px 24px;
+      align-items:center;
+      gap:8px;
+      margin:0;
+    }
+    .expense-edit-split input{
+      text-align:right;
     }
 
     .chips{display:flex;gap:8px;flex-wrap:wrap}
@@ -371,6 +544,7 @@
       font-size:12px;
       font-weight:600;
     }
+    .import-card-status.warning{color:#b45309}
     .import-same-payer{
       display:flex;
       align-items:center;
@@ -391,6 +565,10 @@
       gap:10px;
       flex-wrap:wrap;
       margin-top:12px;
+    }
+    .backup-list{
+      margin-top:12px;
+      overflow:auto;
     }
 
     .seg{
@@ -432,6 +610,16 @@
     .right{margin-left:auto}
     .footer{color:var(--text-muted);text-align:center;margin:32px 0;font-size:13px}
     .note{font-size:13px;color:var(--text-muted);line-height:1.5;margin-top:8px}
+    .cloud-detail{
+      margin-top:8px;
+      padding:10px 12px;
+      border:1px solid var(--border);
+      border-radius:6px;
+      background:var(--row-bg);
+      color:var(--text-muted);
+      font-size:13px;
+      line-height:1.45;
+    }
     .big{font-size:24px;font-weight:700;color:var(--text)}
     .analysis-summary{
       display:grid;
@@ -533,8 +721,59 @@
     @media (max-width: 640px) {
       .wrap{padding:12px}
       .header{padding:12px 16px;margin-bottom:16px}
-      .title{font-size:18px}
-      .header-right{font-size:11px;gap:6px}
+      .title{font-size:18px;order:1}
+      .status-panel{
+        font-size:11px;
+        gap:6px;
+        margin-bottom:14px;
+      }
+      .menu-toggle{
+        order:2;
+        display:inline-flex !important;
+        align-items:center;
+        justify-content:center;
+        margin-left:auto;
+      }
+      .app-nav{
+        order:4;
+        flex:1 1 100%;
+        width:100%;
+        display:none !important;
+        position:sticky;
+        top:8px;
+        z-index:20;
+        grid-template-columns:1fr;
+        overflow:visible;
+        padding:8px;
+        border:1px solid var(--border);
+        border-radius:10px;
+        background:var(--card-bg);
+        box-shadow:0 12px 30px rgba(15, 23, 42, 0.12);
+        gap:8px;
+      }
+      .app-nav.menu-open{
+        display:grid !important;
+      }
+      .app-nav button{
+        min-width:0;
+        padding:10px 12px;
+        font-size:14px;
+        white-space:normal;
+        text-align:left;
+      }
+      .app-nav.signed-out > button[data-target-view]{
+        display:none;
+      }
+      .menu-auth-actions{
+        display:grid;
+        gap:8px;
+        padding-top:10px;
+        margin-top:4px;
+        border-top:1px solid var(--border);
+      }
+      .menu-auth-actions button{
+        width:100%;
+      }
       .card-header{padding:12px 16px}
       .card-content{padding:16px}
       .card-title{font-size:14px}
@@ -542,6 +781,62 @@
       .btn{padding:10px 14px;font-size:13px}
       table{font-size:13px}
       th,td{padding:10px 6px}
+      #expensesTable{
+        table-layout:fixed;
+        width:100%;
+        font-size:11px;
+      }
+      #expensesTable th,
+      #expensesTable td{
+        padding:8px 4px;
+        overflow-wrap:anywhere;
+        word-break:break-word;
+      }
+      #expensesTable th:nth-child(1),
+      #expensesTable td:nth-child(1),
+      #expensesTable th:nth-child(2),
+      #expensesTable td:nth-child(2),
+      #expensesTable th:nth-child(3),
+      #expensesTable td:nth-child(3){
+        display:none;
+      }
+      #expensesTable th:nth-child(4),
+      #expensesTable td:nth-child(4){width:24%}
+      #expensesTable th:nth-child(5),
+      #expensesTable td:nth-child(5){width:34%}
+      #expensesTable th:nth-child(6),
+      #expensesTable td:nth-child(6){width:17%}
+      #expensesTable th:nth-child(7),
+      #expensesTable td:nth-child(7){width:17%}
+      #expensesTable th:nth-child(8),
+      #expensesTable td:nth-child(8){width:8%;text-align:center}
+      #expensesTable tfoot td:nth-child(4),
+      #expensesTable tfoot td:nth-child(6){
+        font-size:12px;
+        font-weight:700;
+      }
+      #expensesTable tfoot td:nth-child(5),
+      #expensesTable tfoot td:nth-child(7),
+      #expensesTable tfoot td:nth-child(8){
+        color:transparent;
+      }
+      #expensesTable .btn{
+        padding:4px 6px;
+        min-width:0;
+        font-size:11px;
+      }
+      .modal{
+        max-height:92vh;
+      }
+      .expense-edit-grid{
+        grid-template-columns:1fr;
+      }
+      .expense-edit-split{
+        grid-template-columns:minmax(80px, 1fr) 80px 18px;
+      }
+      .modal-actions .btn{
+        flex:1 1 auto;
+      }
       .big{font-size:20px}
       .expense-controls-row .payer-col,
       .expense-controls-row .split-col{flex:1 1 100%;min-width:0}
@@ -549,6 +844,14 @@
       .two-person-split .split-right{text-align:left}
       .import-card-top{align-items:flex-start}
       .import-card-top input[type="number"]{width:110px;flex-basis:110px}
+      .import-card-fields{grid-template-columns:1fr}
+      .import-actions{
+        position:sticky;
+        bottom:0;
+        z-index:5;
+        padding:10px 0;
+        background:var(--card-bg);
+      }
       .split-slider-row label{flex:0 0 70px;font-size:12px}
       .split-slider-row .split-value{flex:0 0 40px;font-size:13px}
     }

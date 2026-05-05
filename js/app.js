@@ -1,9 +1,19 @@
 // ---------- Core selectors ----------
     const monthEl = document.getElementById('month');
+    const appNav = document.getElementById('appNav');
+    const menuToggle = document.getElementById('menuToggle');
+    const mobileMenuSignInBtn = document.getElementById('mobileMenuSignInBtn');
+    const mobileMenuSignOutBtn = document.getElementById('mobileMenuSignOutBtn');
+    const homeMonthLabel = document.getElementById('homeMonthLabel');
+    const homeMonthlyTotal = document.getElementById('homeMonthlyTotal');
+    const homeEntryCount = document.getElementById('homeEntryCount');
     const modeBadge = document.getElementById('modeBadge');
     const lastEditedEl = document.getElementById('lastEdited');
     const cloudSyncStatus = document.getElementById('cloudSyncStatus');
     const saveCloudBtn = document.getElementById('saveCloudBtn');
+    const retryCloudBtn = document.getElementById('retryCloudBtn');
+    const exportDataBtn = document.getElementById('exportDataBtn');
+    const cloudStatusDetail = document.getElementById('cloudStatusDetail');
 
     const personNameEl = document.getElementById('personName');
     const addPersonBtn = document.getElementById('addPersonBtn');
@@ -41,6 +51,13 @@
     const duplicateReview = document.getElementById('duplicateReview');
     const totalCell = document.getElementById('totalCell');
     const addExpensesMonthlyTotal = document.getElementById('addExpensesMonthlyTotal');
+    const expenseDetailModal = document.getElementById('expenseDetailModal');
+    const expenseDetailBody = document.getElementById('expenseDetailBody');
+    const closeExpenseDetailBtn = document.getElementById('closeExpenseDetailBtn');
+    const editExpenseDetailBtn = document.getElementById('editExpenseDetailBtn');
+    const saveExpenseDetailBtn = document.getElementById('saveExpenseDetailBtn');
+    const cancelExpenseEditBtn = document.getElementById('cancelExpenseEditBtn');
+    const deleteExpenseDetailBtn = document.getElementById('deleteExpenseDetailBtn');
 
     const totalsPeople = document.getElementById('totalsPeople');
     const totalsCategories = document.getElementById('totalsCategories');
@@ -48,6 +65,10 @@
 
     const clearMonthBtn = document.getElementById('clearMonthBtn');
     const checkDuplicatesBtn = document.getElementById('checkDuplicatesBtn');
+    const loadBackupsBtn = document.getElementById('loadBackupsBtn');
+    const migrateDatesBtn = document.getElementById('migrateDatesBtn');
+    const backupStatus = document.getElementById('backupStatus');
+    const backupList = document.getElementById('backupList');
 
     // Spreadsheet import
     const importFile = document.getElementById('importFile');
@@ -81,6 +102,8 @@
     const authStatus = document.getElementById('authStatus');
     const authMessage = document.getElementById('authMessage');
     const themeToggle = document.getElementById('themeToggle');
+    const accountCardTitle = document.getElementById('accountCardTitle');
+    const accountSectionTitle = document.getElementById('accountSectionTitle');
 
     // ---------- App state ----------
     let data = null; // current month data (only expenses and lastEdited)
@@ -99,6 +122,10 @@
     let cloudSavePending = false;
     let cloudSaveRunning = false;
     let remoteLoadState = 'signed-out';
+    let lastCloudSaveAt = null;
+    let lastCloudError = '';
+    let lastCloudVerifyMessage = '';
+    let activeView = 'account';
     let supabaseClient = null;
     let currentUser = null;
     let currentSession = null;
@@ -389,6 +416,38 @@
         saveCloudBtn.disabled = ['signed-out', 'syncing', 'loading', 'failed'].includes(status) || !currentUser;
         saveCloudBtn.textContent = status === 'syncing' ? 'Saving...' : 'Save to cloud';
       }
+      if(retryCloudBtn){
+        retryCloudBtn.disabled = !currentUser || status === 'syncing' || status === 'loading';
+      }
+      if(cloudStatusDetail){
+        let detail = '';
+        if(!currentUser){
+          detail = 'Local-only mode. Changes stay on this device until you sign in.';
+        } else if(status === 'loading'){
+          detail = 'Loading cloud data. Uploads are blocked until this finishes.';
+        } else if(status === 'failed'){
+          detail = `Cloud data did not load. Uploads are blocked to protect existing data.${lastCloudError ? ' Last error: ' + lastCloudError : ''}`;
+        } else if(status === 'syncing'){
+          detail = 'Saving local changes to Supabase now.';
+        } else if(status === 'pending'){
+          detail = `Saved locally. Cloud retry is pending.${lastCloudError ? ' Last error: ' + lastCloudError : ''}`;
+        } else {
+          const savedAt = lastCloudSaveAt ? formatUK(lastCloudSaveAt) : 'not yet in this session';
+          detail = `Cloud ready. Last confirmed cloud save: ${savedAt}.${lastCloudVerifyMessage ? ' ' + lastCloudVerifyMessage : ''}`;
+        }
+        cloudStatusDetail.textContent = detail;
+      }
+      const blockEditing = !!currentUser && (status === 'loading' || status === 'failed');
+      [
+        addQuickBtn,
+        saveBatchBtn,
+        buildImportPreviewBtn,
+        clearMonthBtn,
+        checkDuplicatesBtn,
+        migrateDatesBtn
+      ].forEach(button => {
+        if(button) button.disabled = blockEditing;
+      });
     }
     function updateCloudStatus(){
       if(!currentUser){
@@ -424,8 +483,11 @@
           try{
             await withTimeout(task(), 9000, label);
             cloudSavePending = false;
+            lastCloudError = '';
+            lastCloudSaveAt = new Date().toISOString();
           }catch(err){
             console.warn(label, err);
+            lastCloudError = err.message || String(err);
             cloudSavePending = true;
           }finally{
             cloudSaveRunning = false;
@@ -462,8 +524,11 @@
           if(savedCount !== expectedCount){
             throw new Error(`Cloud verification failed for ${normalizedMonth}: expected ${expectedCount} expenses, found ${savedCount}.`);
           }
+          lastCloudVerifyMessage = `${normalizedMonth} verified with ${savedCount} expenses.`;
         })(), 12000, 'Manual cloud save');
         cloudSavePending = false;
+        lastCloudError = '';
+        lastCloudSaveAt = new Date().toISOString();
         updateCloudStatus();
         return true;
       }catch(err){
@@ -476,6 +541,23 @@
         cloudSaveRunning = false;
         updateCloudStatus();
       }
+    }
+
+    async function retryCloudSync(){
+      if(!currentUser){
+        alert('Sign in before retrying cloud sync.');
+        return;
+      }
+      if(remoteLoadState !== 'ready'){
+        const loaded = await loadRemote();
+        if(!loaded){
+          alert('Cloud data still could not be loaded. Uploads remain blocked.');
+          return;
+        }
+        await loadFromFileOrLocal(monthEl.value);
+        renderAll();
+      }
+      await syncCloudNow();
     }
     function formatUK(iso){
       if(!iso) return '—';
@@ -936,19 +1018,29 @@
     // CHANGED: computeTotals now shows what each person ACTUALLY PAID (sum by payer), not split shares
     function computeTotals(){
       const perPerson = Object.fromEntries((fileData.people||[]).map(p=>[p,0]));
+      const sharedPaidByPerson = Object.fromEntries((fileData.people||[]).map(p=>[p,0]));
       const perCategory = Object.fromEntries((fileData.categories||[]).map(c=>[c,0]));
       let grand=0;
+      let sharedGrand=0;
       for(const e of (data.expenses||[])){
         const amount = +e.amount || 0;
         const payer = e.payer || e.person || '';
         if(!(payer in perPerson)) perPerson[payer]=0;
+        if(!(payer in sharedPaidByPerson)) sharedPaidByPerson[payer]=0;
         perPerson[payer] = round2((perPerson[payer]||0) + amount);
+        const splits = e.splits || {[payer]:100};
+        const sharedExpense = Object.values(splits).filter(pct => (+pct || 0) > 0).length > 1;
+        if(sharedExpense){
+          sharedPaidByPerson[payer] = round2((sharedPaidByPerson[payer] || 0) + amount);
+          sharedGrand = round2(sharedGrand + amount);
+        }
         if(!(e.category in perCategory)) perCategory[e.category]=0;
         perCategory[e.category]+= amount;
         grand+= amount;
       }
       perPerson.__total = round2(grand);
-      return {perPerson, perCategory};
+      sharedPaidByPerson.__total = round2(sharedGrand);
+      return {perPerson, sharedPaidByPerson, perCategory};
     }
 
     // CHANGED: computeSettlements uses PAID vs OWED (OWED from splits), not equal-share-of-grand-total
@@ -957,6 +1049,7 @@
       const paid = Object.fromEntries(people.map(p=>[p,0]));
       const owed = Object.fromEntries(people.map(p=>[p,0]));
       let grand = 0;
+      let sharedTotal = 0;
 
       for(const e of (data.expenses||[])){
         const amount = +e.amount || 0;
@@ -970,6 +1063,10 @@
         // liability owed according to splits
         const splits = e.splits || {[payer]:100};
         const entries = Object.entries(splits);
+        const activeSplitPeople = entries.filter(([_, pct]) => (+pct || 0) > 0);
+        if(activeSplitPeople.length > 1){
+          sharedTotal = round2(sharedTotal + amount);
+        }
         let allocated = 0;
         entries.forEach(([p, pct], idx) => {
           if(!(p in owed)) owed[p]=0;
@@ -1001,9 +1098,9 @@
         if(c.balance<=0.0001) ci++;
         if(d.balance>=-0.0001) di++;
       }
-      // Share kept ONLY for existing UI display; not used in balance math
+      // Display-only summary: average share of expenses split between more than one person.
       const n = people.length || 1;
-      const share = round2((grand||0)/n);
+      const share = round2((sharedTotal||0)/n);
       return {share, balances, transfers};
     }
 
@@ -1105,20 +1202,42 @@
         const amount = +e.amount || 0;
         total += amount;
         const tr = document.createElement('tr');
+        tr.className = 'expense-row';
+        tr.tabIndex = 0;
+        tr.addEventListener('click', event => {
+          if(event.target.closest('button')) return;
+          openExpenseDetail(idx);
+        });
+        tr.addEventListener('keydown', event => {
+          if(event.key === 'Enter' || event.key === ' '){
+            event.preventDefault();
+            openExpenseDetail(idx);
+          }
+        });
         const splitTxt = splitsToLabel(e.splits||{[payer]:100});
-        const cells = [i++, formatExpenseDate(e.date), payer, e.category || '', e.note || '', euro(amount), splitTxt];
+        const cells = [
+          { label:'#', value:i++ },
+          { label:'Date', value:`${formatExpenseDate(e.date)}${e.dateEstimated ? ' (estimated)' : ''}` },
+          { label:'Payer', value:payer },
+          { label:'Category', value:e.category || '' },
+          { label:'Note', value:e.note || '' },
+          { label:'Amount', value:euro(amount) },
+          { label:'Split', value:splitTxt }
+        ];
         for(const cell of cells){
           const td = document.createElement('td');
-          td.textContent = cell;
+          td.dataset.label = cell.label;
+          td.textContent = cell.value;
           tr.appendChild(td);
         }
         const deleteCell = document.createElement('td');
+        deleteCell.dataset.label = 'Delete';
         const deleteBtn = document.createElement('button');
         deleteBtn.className = 'btn ghost';
         deleteBtn.title = 'Delete';
         deleteBtn.dataset.i = String(idx);
         deleteBtn.type = 'button';
-        deleteBtn.textContent = '🗑️';
+        deleteBtn.textContent = 'x';
         deleteBtn.addEventListener('click', async ()=>{ (data.expenses||[]).splice(idx,1); await save(); renderAll(); });
         deleteCell.appendChild(deleteBtn);
         tr.appendChild(deleteCell);
@@ -1126,30 +1245,38 @@
       }
       if(footRow){
         footRow.innerHTML = '';
-        const labelCell = document.createElement('td');
-        labelCell.colSpan = 5;
-        labelCell.textContent = 'Total';
-        footRow.appendChild(labelCell);
-        const allTotalCell = document.createElement('td');
-        allTotalCell.id = 'totalCell';
-        allTotalCell.textContent = euro(round2(total));
-        footRow.appendChild(allTotalCell);
-        footRow.appendChild(document.createElement('td'));
-        footRow.appendChild(document.createElement('td'));
+        const footerCells = [
+          { label:'#', value:'' },
+          { label:'Date', value:'' },
+          { label:'Payer', value:'' },
+          { label:'Category', value:'Total' },
+          { label:'Note', value:'' },
+          { label:'Amount', value:euro(round2(total)), id:'totalCell' },
+          { label:'Split', value:'' },
+          { label:'Delete', value:'' }
+        ];
+        for(const cell of footerCells){
+          const td = document.createElement('td');
+          td.dataset.label = cell.label;
+          td.textContent = cell.value;
+          if(cell.id) td.id = cell.id;
+          footRow.appendChild(td);
+        }
       }
       const monthlyTotal = monthExpenses.reduce((sum, expense) => round2(sum + (+expense.amount || 0)), 0);
       if(addExpensesMonthlyTotal) addExpensesMonthlyTotal.textContent = euro(round2(monthlyTotal));
     }
     function renderTotals(){
-      const {perPerson, perCategory} = computeTotals();
+      const {perPerson, sharedPaidByPerson, perCategory} = computeTotals();
       const total = perPerson.__total || 0;
+      const sharedTotal = sharedPaidByPerson.__total || 0;
       let htmlP='';
       if((fileData.people||[]).length){
-        htmlP += '<table><thead><tr><th>Person</th><th>Total paid this month</th></tr></thead><tbody>';
+        htmlP += '<table><thead><tr><th>Person</th><th>Total paid this month</th><th>Total shared costs paid</th></tr></thead><tbody>';
         for(const p of (fileData.people||[])){
-          htmlP += '<tr><td>'+p+'</td><td>'+euro(round2(perPerson[p]||0))+'</td></tr>';
+          htmlP += '<tr><td>'+p+'</td><td>'+euro(round2(perPerson[p]||0))+'</td><td>'+euro(round2(sharedPaidByPerson[p]||0))+'</td></tr>';
         }
-        htmlP += '</tbody><tfoot><tr><td>All people</td><td>'+euro(round2(total))+'</td></tr></tfoot></table>';
+        htmlP += '</tbody><tfoot><tr><td>All people</td><td>'+euro(round2(total))+'</td><td>'+euro(round2(sharedTotal))+'</td></tr></tfoot></table>';
       } else htmlP = '<div class="muted">Add some people to see totals.</div>';
       totalsPeople.innerHTML = htmlP;
 
@@ -1182,8 +1309,304 @@
       }
       settlements.innerHTML = html;
     }
+    function escapeHtml(value){
+      return String(value || '').replace(/[<>&"]/g, char => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[char]));
+    }
+    function setExpenseDetailMode(mode){
+      const editing = mode === 'edit';
+      if(editExpenseDetailBtn) editExpenseDetailBtn.style.display = editing ? 'none' : '';
+      if(saveExpenseDetailBtn) saveExpenseDetailBtn.style.display = editing ? '' : 'none';
+      if(cancelExpenseEditBtn) cancelExpenseEditBtn.style.display = editing ? '' : 'none';
+      if(deleteExpenseDetailBtn) deleteExpenseDetailBtn.style.display = editing ? 'none' : '';
+    }
+    function expenseDetailIndex(){
+      const index = Number(expenseDetailModal?.dataset.index);
+      return Number.isInteger(index) ? index : -1;
+    }
+    function openExpenseDetail(index){
+      const expense = (data.expenses || [])[index];
+      if(!expense || !expenseDetailModal || !expenseDetailBody) return;
+      expenseDetailModal.dataset.index = String(index);
+      renderExpenseDetailView(index);
+      expenseDetailModal.style.display = 'flex';
+    }
+    function renderExpenseDetailView(index){
+      const expense = (data.expenses || [])[index];
+      if(!expense || !expenseDetailBody) return;
+      const payer = expense.payer || expense.person || '';
+      const rows = [
+        ['Date', `${formatExpenseDate(expense.date)}${expense.dateEstimated ? ' (estimated)' : ''}`],
+        ['Payer', payer],
+        ['Category', expense.category || ''],
+        ['Note', expense.note || ''],
+        ['Amount', euro(+expense.amount || 0)],
+        ['Split', splitsToLabel(expense.splits || {[payer]:100})]
+      ];
+      expenseDetailBody.innerHTML = '<table><tbody>' + rows.map(([label, value]) => (
+        '<tr><th>'+escapeHtml(label)+'</th><td>'+escapeHtml(value)+'</td></tr>'
+      )).join('') + '</tbody></table>';
+      setExpenseDetailMode('view');
+    }
+    function renderExpenseDetailEdit(index){
+      const expense = (data.expenses || [])[index];
+      if(!expense || !expenseDetailBody) return;
+      const payer = expense.payer || expense.person || '';
+      const splitPeople = uniqueList([...(fileData.people || []), payer, ...Object.keys(expense.splits || {})]);
+      const currentSplits = Object.keys(expense.splits || {}).length ? expense.splits : {[payer]:100};
+      expenseDetailBody.innerHTML = `
+        <div class="expense-edit-grid">
+          <div class="col">
+            <label for="detailDate">Date</label>
+            <input id="detailDate" type="date" value="${escapeHtml(expense.date || dateValueFromMonth(monthEl.value))}">
+          </div>
+          <div class="col">
+            <label for="detailPayer">Payer</label>
+            <select id="detailPayer"></select>
+          </div>
+          <div class="col">
+            <label for="detailCategory">Category</label>
+            <select id="detailCategory"></select>
+          </div>
+          <div class="col">
+            <label for="detailAmount">Amount</label>
+            <input id="detailAmount" type="number" inputmode="decimal" step="0.01" min="0" value="${escapeHtml(+expense.amount || 0)}">
+          </div>
+          <div class="col expense-edit-wide">
+            <label for="detailNote">Note</label>
+            <textarea id="detailNote">${escapeHtml(expense.note || '')}</textarea>
+          </div>
+          <div class="col expense-edit-wide">
+            <label>Split</label>
+            <div class="expense-edit-splits">
+              ${splitPeople.map(person => `
+                <label class="expense-edit-split">
+                  <span>${escapeHtml(person)}</span>
+                  <input class="detailSplitInput" type="number" inputmode="numeric" min="0" max="100" step="5" data-person="${escapeHtml(person)}" value="${escapeHtml(currentSplits[person] || 0)}">
+                  <span>%</span>
+                </label>
+              `).join('')}
+            </div>
+            <div id="detailSplitStatus" class="note"></div>
+          </div>
+        </div>
+      `;
+      const payerSelect = document.getElementById('detailPayer');
+      const categorySelect = document.getElementById('detailCategory');
+      fillSelect(payerSelect, uniqueList([...(fileData.people || []), payer]));
+      fillSelect(categorySelect, uniqueList([...(fileData.categories || []), expense.category || '']));
+      payerSelect.value = payer;
+      categorySelect.value = expense.category || '';
+      const updateSplitStatus = () => {
+        const total = Array.from(document.querySelectorAll('.detailSplitInput'))
+          .reduce((sum, input) => sum + (parseInt(input.value) || 0), 0);
+        const status = document.getElementById('detailSplitStatus');
+        if(status) status.textContent = `Split total: ${total}%${total === 100 ? '' : ' - must be 100%'}`;
+      };
+      document.querySelectorAll('.detailSplitInput').forEach(input => input.addEventListener('input', updateSplitStatus));
+      updateSplitStatus();
+      setExpenseDetailMode('edit');
+    }
+    function closeExpenseDetail(){
+      if(expenseDetailModal) expenseDetailModal.style.display = 'none';
+      if(expenseDetailModal) delete expenseDetailModal.dataset.index;
+      setExpenseDetailMode('view');
+    }
+    function editExpenseFromDetail(){
+      const index = expenseDetailIndex();
+      if(index >= 0) renderExpenseDetailEdit(index);
+    }
+    function cancelExpenseEdit(){
+      const index = expenseDetailIndex();
+      if(index >= 0) renderExpenseDetailView(index);
+    }
+    async function saveExpenseDetailEdits(){
+      const index = expenseDetailIndex();
+      const expense = data.expenses?.[index];
+      if(!expense) return;
+      const date = document.getElementById('detailDate')?.value || dateValueFromMonth(monthEl.value);
+      const payer = document.getElementById('detailPayer')?.value || '';
+      const category = document.getElementById('detailCategory')?.value || '';
+      const note = document.getElementById('detailNote')?.value.trim() || '';
+      const amount = parseFloat(document.getElementById('detailAmount')?.value || '');
+      if(!payer){ alert('Please choose a payer.'); return; }
+      if(!category){ alert('Please choose a category.'); return; }
+      if(!Number.isFinite(amount) || amount <= 0){ alert('Please enter a valid amount.'); return; }
+      const splits = {};
+      let splitTotal = 0;
+      document.querySelectorAll('.detailSplitInput').forEach(input => {
+        const value = parseInt(input.value) || 0;
+        if(value > 0) splits[input.dataset.person] = value;
+        splitTotal += value;
+      });
+      if(splitTotal !== 100){
+        alert('The split must add up to 100%.');
+        return;
+      }
+      data.expenses[index] = { ...expense, date, payer, category, note, amount: round2(amount), splits };
+      delete data.expenses[index].person;
+      delete data.expenses[index].dateEstimated;
+      await save();
+      renderAll();
+      renderExpenseDetailView(index);
+    }
+    async function deleteExpenseFromDetail(){
+      const index = expenseDetailIndex();
+      if(!Number.isInteger(index) || !data.expenses?.[index]) return;
+      if(!confirm('Delete this expense?')) return;
+      data.expenses.splice(index, 1);
+      await save();
+      closeExpenseDetail();
+      renderAll();
+    }
+    function renderHome(){
+      if(homeMonthLabel) homeMonthLabel.textContent = monthLabel(monthEl.value);
+      const expenses = data?.expenses || [];
+      const total = expenses.reduce((sum, expense) => round2(sum + (+expense.amount || 0)), 0);
+      if(homeMonthlyTotal) homeMonthlyTotal.textContent = euro(round2(total));
+      if(homeEntryCount) homeEntryCount.textContent = String(expenses.length);
+    }
     function renderAll(){
-      renderPeopleCats(); renderExpenses(); renderTotals(); renderSettlements(); renderLastEdited(); renderAverages();
+      renderPeopleCats(); renderExpenses(); renderTotals(); renderSettlements(); renderHome(); renderLastEdited(); renderAverages();
+    }
+
+    function sectionsForView(view){
+      if(!currentUser) return ['auth'];
+      const map = {
+        home: ['home', 'month'],
+        add: ['month', 'add-expenses'],
+        review: ['month', 'all-expenses'],
+        settle: ['month', 'totals-people', 'settlements'],
+        analysis: ['month', 'averages'],
+        account: ['auth'],
+        settings: ['people', 'categories']
+      };
+      return map[view] || map.home;
+    }
+
+    function setView(view){
+      activeView = currentUser ? (view || 'home') : 'account';
+      if(!currentUser) closeMobileMenu();
+      const visible = new Set(sectionsForView(activeView));
+      document.querySelectorAll('[data-section]').forEach(section => {
+        section.classList.toggle('view-hidden', !visible.has(section.dataset.section));
+      });
+      if(appNav){
+        appNav.style.display = '';
+        appNav.classList.toggle('signed-in', !!currentUser);
+        appNav.classList.toggle('signed-out', !currentUser);
+        appNav.querySelectorAll('[data-target-view]').forEach(button => {
+          button.classList.toggle('active', button.dataset.targetView === activeView);
+        });
+      }
+      if(menuToggle){
+        menuToggle.hidden = false;
+      }
+      renderHome();
+    }
+
+    function refreshAppView(){
+      setView(currentUser ? activeView || 'home' : 'account');
+    }
+    function closeMobileMenu(){
+      if(appNav) appNav.classList.remove('menu-open');
+      if(menuToggle) menuToggle.setAttribute('aria-expanded', 'false');
+    }
+    function toggleMobileMenu(){
+      if(!appNav || !menuToggle) return;
+      const isOpen = appNav.classList.toggle('menu-open');
+      menuToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    }
+
+    function makeExportSnapshot(){
+      const months = {};
+      for(const month of listSavedMonths()){
+        const key = normalizeMonthKey(month);
+        if(/^\d{4}-\d{2}$/.test(key)){
+          months[key] = normalizeMonthData(getMonthData(key));
+        }
+      }
+      return {
+        exportedAt: new Date().toISOString(),
+        mode: currentUser ? 'signed-in' : 'local',
+        user: currentUser ? { id: currentUser.id, email: currentUser.email } : null,
+        people: fileData.people || [],
+        categories: fileData.categories || [],
+        months
+      };
+    }
+
+    function downloadText(filename, text, type = 'application/json'){
+      const blob = new Blob([text], { type });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportAllData(){
+      const snapshot = makeExportSnapshot();
+      const stamp = new Date().toISOString().slice(0, 10);
+      downloadText(`family-accounts-export-${stamp}.json`, JSON.stringify(snapshot, null, 2));
+    }
+
+    function renderBackupRows(backups){
+      if(!backupList) return;
+      backupList.innerHTML = '';
+      if(!backups.length){
+        backupList.innerHTML = '<div class="muted">No backups found yet.</div>';
+        return;
+      }
+      const table = document.createElement('table');
+      table.innerHTML = '<thead><tr><th>When</th><th>Source</th><th>Operation</th><th>Old</th><th>New</th><th></th></tr></thead><tbody></tbody>';
+      const tbody = table.querySelector('tbody');
+      backups.forEach(backup => {
+        const oldPayload = backup.old_data?.data || backup.old_data || null;
+        const newPayload = backup.new_data?.data || backup.new_data || null;
+        const oldCount = backup.source_table === 'family_account_months' ? expenseCount(normalizeMonthData(oldPayload)) : '';
+        const newCount = backup.source_table === 'family_account_months' ? expenseCount(normalizeMonthData(newPayload)) : '';
+        const tr = document.createElement('tr');
+        [formatUK(backup.created_at), backup.source_month || backup.source_table, backup.operation, oldCount, newCount].forEach(value => {
+          const td = document.createElement('td');
+          td.textContent = String(value ?? '');
+          tr.appendChild(td);
+        });
+        const actionCell = document.createElement('td');
+        if(backup.source_table === 'family_account_months' && backup.source_month){
+          const restoreBtn = document.createElement('button');
+          restoreBtn.type = 'button';
+          restoreBtn.className = 'btn ghost compact';
+          restoreBtn.textContent = 'Restore';
+          restoreBtn.addEventListener('click', async () => {
+            try{
+              const restored = await restoreMonthFromBackup(backup);
+              if(restored){
+                backupStatus.textContent = `Restored ${backup.source_month}.`;
+                await loadAndRenderBackups();
+              }
+            }catch(err){
+              backupStatus.textContent = err.message || String(err);
+            }
+          });
+          actionCell.appendChild(restoreBtn);
+        }
+        tr.appendChild(actionCell);
+        tbody.appendChild(tr);
+      });
+      backupList.appendChild(table);
+    }
+
+    async function loadAndRenderBackups(){
+      if(!backupStatus || !backupList) return;
+      backupStatus.textContent = 'Loading backups...';
+      try{
+        const backups = await fetchRecentBackups(40);
+        renderBackupRows(backups);
+        backupStatus.textContent = `Loaded ${backups.length} recent backups.`;
+      }catch(err){
+        backupStatus.textContent = err.message || String(err);
+      }
     }
 
     function fillSelect(selectEl, items){
@@ -1243,6 +1666,51 @@
         .sort()
         .map(m => ({ month:m, data:getMonthData(m) }))
         .filter(row => row.data && (row.data.expenses || []).length);
+    }
+
+    async function migrateMissingExpenseDates(){
+      const months = listSavedMonths().map(normalizeMonthKey).filter(m => /^\d{4}-\d{2}$/.test(m));
+      let changedExpenseCount = 0;
+      const changedMonths = [];
+      for(const month of months){
+        const monthData = normalizeMonthData(getMonthData(month));
+        let changed = false;
+        for(const expense of monthData.expenses || []){
+          if(!expense.date){
+            expense.date = dateValueFromMonth(month);
+            expense.dateEstimated = true;
+            changed = true;
+            changedExpenseCount += 1;
+          }
+        }
+        if(changed){
+          monthData.lastEdited = new Date().toISOString();
+          changedMonths.push({ month, data: monthData });
+        }
+      }
+      if(!changedMonths.length){
+        alert('No undated expenses found.');
+        return;
+      }
+      if(!confirm(`Add estimated dates to ${changedExpenseCount} old expenses across ${changedMonths.length} months?`)){
+        return;
+      }
+      if(currentUser){
+        for(const row of changedMonths){
+          fileData.months[row.month] = row.data;
+          localSaveCurrent(row.month, row.data);
+        }
+        await saveRemote();
+        for(const row of changedMonths){
+          await saveRemoteMonth(row.month, row.data, { allowEmptyOverwrite:true });
+        }
+        await loadFromFileOrLocal(monthEl.value);
+      } else {
+        changedMonths.forEach(row => localSaveCurrent(row.month, row.data));
+        await loadFromFileOrLocal(monthEl.value);
+      }
+      renderAll();
+      alert(`Estimated dates added to ${changedExpenseCount} expenses.`);
     }
     function sumMaps(maps){
       const total = {};
@@ -1568,6 +2036,55 @@
       return remoteRows?.[0]?.data || {};
     }
 
+    async function fetchRecentBackups(limit = 30){
+      if(!supabaseClient || !currentUser) throw new Error('Sign in before loading backups.');
+      const { data: rows, error } = await withTimeout(
+        supabaseClient
+          .from('family_account_backups')
+          .select('id,source_table,source_month,operation,old_data,new_data,created_at')
+          .order('created_at', { ascending:false })
+          .limit(limit),
+        8000,
+        'Backup load'
+      );
+      if(error) throw error;
+      return rows || [];
+    }
+
+    function backupPayloadForRestore(backup){
+      if(!backup) return null;
+      const row = backup.old_data || backup.new_data || null;
+      if(!row) return null;
+      if(backup.source_table === 'family_account_months'){
+        return row.data ? normalizeMonthData(row.data) : null;
+      }
+      return row.data || null;
+    }
+
+    async function restoreMonthFromBackup(backup){
+      if(!backup || backup.source_table !== 'family_account_months' || !backup.source_month){
+        throw new Error('Choose a month backup to restore.');
+      }
+      const restored = backupPayloadForRestore(backup);
+      if(!restored || !Array.isArray(restored.expenses)){
+        throw new Error('This backup does not contain a restorable month.');
+      }
+      const month = normalizeMonthKey(backup.source_month);
+      const count = expenseCount(restored);
+      const message = `Restore ${month} from backup ${backup.id} with ${count} expenses? This will replace the current cloud month.`;
+      if(!confirm(message)) return false;
+      fileData.months[month] = restored;
+      if(month === normalizeMonthKey(activeMonth || monthEl.value)){
+        data = JSON.parse(JSON.stringify(restored));
+        localSaveCurrent(month, data);
+      }
+      await saveRemote({ allowEmptyOverwrite:true });
+      await saveRemoteMonth(month, restored, { allowEmptyOverwrite:true });
+      await loadFromFileOrLocal(monthEl.value);
+      renderAll();
+      return true;
+    }
+
     async function saveRemoteMonth(month, monthData, options = {}){
       const key = normalizeMonthKey(month);
       const nextData = normalizeMonthData(monthData);
@@ -1623,9 +2140,28 @@
     function updateAuthStatus(){
       if(currentUser){
         authStatus.textContent = `Signed in as ${currentUser.email}`;
+        if(accountCardTitle) accountCardTitle.textContent = 'Account management';
+        if(accountSectionTitle) accountSectionTitle.textContent = 'Account';
       } else {
         authStatus.textContent = 'Not signed in.';
+        if(accountCardTitle) accountCardTitle.textContent = 'Sign in';
+        if(accountSectionTitle) accountSectionTitle.textContent = 'Sign in';
       }
+      const authFieldsRow = authEmail?.closest('.row');
+      if(authFieldsRow) authFieldsRow.style.display = currentUser ? 'none' : 'flex';
+      [signInBtn, signUpBtn, forgotPasswordBtn].forEach(button => {
+        if(button) button.style.display = currentUser ? 'none' : '';
+      });
+      [signOutBtn, saveCloudBtn, retryCloudBtn, exportDataBtn].forEach(button => {
+        if(button) button.style.display = currentUser ? '' : 'none';
+      });
+      document.querySelectorAll('.signed-in-only').forEach(section => {
+        section.style.display = currentUser ? '' : 'none';
+      });
+      if(mobileMenuSignInBtn) mobileMenuSignInBtn.style.display = currentUser ? 'none' : '';
+      if(mobileMenuSignOutBtn) mobileMenuSignOutBtn.style.display = currentUser ? '' : 'none';
+      const advancedTools = document.querySelector('.advanced-tools');
+      if(advancedTools) advancedTools.style.display = currentUser ? 'block' : 'none';
       setModeBadge();
       updateCloudStatus();
     }
@@ -1855,6 +2391,21 @@
         .map(([person, pct]) => `${person}:${Number(pct) || 0}`)
         .join('|');
       return [date, payer, category, note, amount, splits].join('::');
+    }
+    function importRowToExpense(row){
+      const selectedMonth = normalizeMonthKey(monthEl.value);
+      return {
+        date: row.dateValue || dateValueFromMonth(selectedMonth),
+        payer: row.payer,
+        category: row.category || 'Other',
+        amount: round2(row.amount),
+        note: row.description,
+        splits: splitFromImportChoice(row.splitChoice, row.payer)
+      };
+    }
+    function findImportDuplicate(row){
+      const candidateKey = duplicateExpenseKey(importRowToExpense(row));
+      return (data.expenses || []).findIndex(expense => duplicateExpenseKey(expense) === candidateKey);
     }
     function getDuplicateGroups(){
       const expenses = data?.expenses || [];
@@ -2310,7 +2861,7 @@
         const amount = Math.abs(signedAmount);
         const payer = useSamePayer ? defaultPayer : (payerCol ? String(row[payerCol] || '').trim() : defaultPayer);
         const suggestion = suggestCategory(suggestionText);
-        return {
+        const draft = {
           sourceIndex,
           selected: !!description && amount > 0 && rowMonth === selectedMonth,
           date: dateCol ? String(row[dateCol] || '') : '',
@@ -2325,6 +2876,9 @@
           reason: suggestion.reason,
           splitChoice: defaultSplitValue()
         };
+        draft.duplicateIndex = draft.selected ? findImportDuplicate(draft) : -1;
+        if(draft.duplicateIndex >= 0) draft.selected = false;
+        return draft;
       }).filter(row => {
         if(!row.description || row.amount <= 0) return false;
         if(row.signedAmount >= 0) return false;
@@ -2337,6 +2891,13 @@
     }
     function renderImportStatusCell(cell, row){
       if(!cell) return;
+      row.duplicateIndex = findImportDuplicate(row);
+      if(row.duplicateIndex >= 0){
+        cell.textContent = `Possible duplicate of row ${row.duplicateIndex + 1} already in this month.`;
+        cell.classList.add('warning');
+        return;
+      }
+      cell.classList.remove('warning');
       cell.textContent = row.categoryIsNew ? `New category needs confirmation: ${row.category || 'blank'}` : (row.reason || '');
     }
     function renderImportPreview(){
@@ -2381,7 +2942,10 @@
         amountInput.type = 'number';
         amountInput.step = '0.01';
         amountInput.value = row.amount;
-        amountInput.addEventListener('input', () => { row.amount = parseImportAmount(amountInput.value); });
+        amountInput.addEventListener('input', () => {
+          row.amount = parseImportAmount(amountInput.value);
+          renderImportStatusCell(statusCell, row);
+        });
         top.appendChild(amountInput);
         card.appendChild(top);
 
@@ -2403,7 +2967,10 @@
         fillSelect(payerSelect, fileData.people || []);
         payerSelect.value = row.payer;
         payerSelect.disabled = !!importUseSamePayer?.checked;
-        payerSelect.addEventListener('change', () => { row.payer = payerSelect.value; });
+        payerSelect.addEventListener('change', () => {
+          row.payer = payerSelect.value;
+          renderImportStatusCell(statusCell, row);
+        });
         payerField.appendChild(payerSelect);
         fields.appendChild(payerField);
 
@@ -2466,7 +3033,10 @@
           splitSelect.appendChild(option);
         });
         splitSelect.value = row.splitChoice;
-        splitSelect.addEventListener('change', () => { row.splitChoice = splitSelect.value; });
+        splitSelect.addEventListener('change', () => {
+          row.splitChoice = splitSelect.value;
+          renderImportStatusCell(statusCell, row);
+        });
         splitField.appendChild(splitSelect);
         fields.appendChild(splitField);
 
@@ -2525,17 +3095,15 @@
         alert('Every imported row needs a category. Please choose a category in the preview.');
         return;
       }
+      const duplicateRows = rows.filter(row => findImportDuplicate(row) >= 0);
+      if(duplicateRows.length){
+        const proceed = confirm(`${duplicateRows.length} selected row(s) look like duplicates already in this month. Import them anyway?`);
+        if(!proceed) return;
+      }
       importInProgress = true;
       try{
         for(const row of rows){
-          (data.expenses = data.expenses || []).push({
-            date: row.dateValue || dateValueFromMonth(selectedMonth),
-            payer: row.payer,
-            category: row.category || 'Other',
-            amount: round2(row.amount),
-            note: row.description,
-            splits: splitFromImportChoice(row.splitChoice, row.payer)
-          });
+          (data.expenses = data.expenses || []).push(importRowToExpense(row));
         }
         await save();
         importDraftRows = importDraftRows.filter(row => !rows.includes(row));
@@ -2671,6 +3239,7 @@
           updateAuthStatus();
           renderAll();
           renderAverages();
+          refreshAppView();
 
           // Handle specific auth events
           if(event === 'SIGNED_IN' && !window.location.hash){
@@ -2701,11 +3270,35 @@
       renderAverages();
       updateAuthStatus();
       updateCloudStatus();
+      if(currentUser) activeView = 'home';
+      refreshAppView();
       if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
 
       if(analysisView) analysisView.addEventListener('change', renderAverages);
       if(analysisCompareA) analysisCompareA.addEventListener('change', renderAverages);
       if(analysisCompareB) analysisCompareB.addEventListener('change', renderAverages);
+      if(menuToggle){
+        menuToggle.addEventListener('click', toggleMobileMenu);
+      }
+      if(mobileMenuSignInBtn){
+        mobileMenuSignInBtn.addEventListener('click', () => {
+          setView('account');
+          closeMobileMenu();
+          authEmail?.focus();
+        });
+      }
+      if(mobileMenuSignOutBtn){
+        mobileMenuSignOutBtn.addEventListener('click', () => {
+          closeMobileMenu();
+          signOutBtn?.click();
+        });
+      }
+      document.querySelectorAll('[data-target-view]').forEach(button => {
+        button.addEventListener('click', () => {
+          setView(button.dataset.targetView);
+          closeMobileMenu();
+        });
+      });
 
       monthEl.addEventListener('change', async ()=>{
         const target = monthEl.value;
@@ -2777,8 +3370,45 @@
         });
       }
       if(saveCloudBtn){
-        saveCloudBtn.addEventListener('click', syncCloudNow);
+        saveCloudBtn.addEventListener('click', () => syncCloudNow());
       }
+      if(retryCloudBtn){
+        retryCloudBtn.addEventListener('click', retryCloudSync);
+      }
+      if(exportDataBtn){
+        exportDataBtn.addEventListener('click', exportAllData);
+      }
+      if(loadBackupsBtn){
+        loadBackupsBtn.addEventListener('click', loadAndRenderBackups);
+      }
+      if(migrateDatesBtn){
+        migrateDatesBtn.addEventListener('click', migrateMissingExpenseDates);
+      }
+      if(closeExpenseDetailBtn){
+        closeExpenseDetailBtn.addEventListener('click', closeExpenseDetail);
+      }
+      if(editExpenseDetailBtn){
+        editExpenseDetailBtn.addEventListener('click', editExpenseFromDetail);
+      }
+      if(saveExpenseDetailBtn){
+        saveExpenseDetailBtn.addEventListener('click', saveExpenseDetailEdits);
+      }
+      if(cancelExpenseEditBtn){
+        cancelExpenseEditBtn.addEventListener('click', cancelExpenseEdit);
+      }
+      if(deleteExpenseDetailBtn){
+        deleteExpenseDetailBtn.addEventListener('click', deleteExpenseFromDetail);
+      }
+      if(expenseDetailModal){
+        expenseDetailModal.addEventListener('click', event => {
+          if(event.target === expenseDetailModal) closeExpenseDetail();
+        });
+      }
+      document.addEventListener('keydown', event => {
+        if(event.key === 'Escape' && expenseDetailModal?.style.display !== 'none'){
+          closeExpenseDetail();
+        }
+      });
 
       signInBtn.addEventListener('click', async ()=>{
         hideAuthMessage();
@@ -2820,6 +3450,7 @@
           updateAuthStatus();
           renderAll();
           renderAverages();
+          setView('home');
           showAuthMessage(`Successfully signed in as ${currentUser?.email || ''}`, 'success');
           authPassword.value = ''; // Clear password field
         } finally {
@@ -2898,6 +3529,7 @@
         updateAuthStatus();
         renderAll();
         renderAverages();
+        refreshAppView();
         if(signOutError){
           showAuthMessage('Signed out locally. Cloud sign-out may have timed out.', 'info');
         } else {
