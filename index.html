@@ -1,16 +1,17 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
-  <title>Family Accounts — Updated</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260506-1" />
-<link rel="manifest" href="manifest.webmanifest?v=3" />
-<meta name="theme-color" content="#ffffff" />
-<link rel="icon" href="public/favicon-32.png" sizes="32x32" />
-<link rel="icon" href="public/favicon-48.png" sizes="48x48" />
+  <title>Family Accounts</title>
+  <link rel="stylesheet" href="css/styles.css?v=20260506-6" />
+<link rel="manifest" href="manifest.webmanifest?v=5" />
+<meta name="theme-color" content="#00796f" />
+<link rel="icon" href="public/favicon-32.png?v=20260506-6" sizes="32x32" />
+<link rel="icon" href="public/favicon-48.png?v=20260506-6" sizes="48x48" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js"></script>
 
 <script defer src="js/service-worker-cleanup.js?v=20260506-1"></script>
 </head>
@@ -31,41 +32,34 @@
         </div>
       </nav>
       <div class="title">
-        <div class="logo"><img src="public/favicon-32.png" alt="Family Accounts logo" /></div>
+        <div class="logo"><img src="public/logo.svg?v=20260506-6" alt="Family Accounts logo" /></div>
         <span>Family Accounts</span>
       </div>
       <button class="menu-toggle" id="menuToggle" type="button" aria-label="Open menu" aria-expanded="false">&#9776;</button>
     </div>
-      <div class="status-panel">
-        <span id="modeBadge">Local storage</span>
-        <span>•</span>
-        <span id="cloudSyncStatus">Cloud: not signed in</span>
-        <span>•</span>
-        <span>Last edited: <span id="lastEdited">—</span></span>
-      </div>
-
     <div class="stack" style="margin-top:14px">
       <div class="card" data-section="home">
-        <div class="card-header"><div class="card-title">Home</div><div class="chev">â–¸</div></div>
+        <div class="card-header"><div class="card-title">Home</div><div class="chev">▸</div></div>
         <div class="card-content">
           <div class="home-summary">
-            <div class="analysis-metric"><div class="muted">Month</div><div class="big" id="homeMonthLabel">-</div></div>
+            <div class="analysis-metric home-month-picker"><label for="homeMonthInput">Month</label><input type="month" id="homeMonthInput" /></div>
             <div class="analysis-metric"><div class="muted">Monthly total</div><div class="big" id="homeMonthlyTotal">0.00 EUR</div></div>
             <div class="analysis-metric"><div class="muted">Entries</div><div class="big" id="homeEntryCount">0</div></div>
           </div>
           <div class="home-actions">
-            <button class="btn" type="button" data-target-view="add">Add expenses</button>
-            <button class="btn ghost" type="button" data-target-view="review">Review expenses</button>
-            <button class="btn ghost" type="button" data-target-view="settle">Settle up</button>
-            <button class="btn ghost" type="button" data-target-view="analysis">Analyse spending</button>
-            <button class="btn ghost" type="button" data-target-view="account">Manage account</button>
+            <button class="home-action primary" type="button" data-target-view="add"><span class="home-action-icon"><i data-lucide="circle-plus"></i></span><span class="home-action-copy"><span>Add expenses</span><small>Quick, batch, or import</small></span></button>
+            <button class="home-action" type="button" data-target-view="review"><span class="home-action-icon"><i data-lucide="clipboard-list"></i></span><span class="home-action-copy"><span>Review expenses</span><small>Check and edit entries</small></span></button>
+            <button class="home-action" type="button" data-target-view="settle"><span class="home-action-icon"><i data-lucide="arrow-left-right"></i></span><span class="home-action-copy"><span>Settle up</span><small>See who owes who</small></span></button>
+            <button class="home-action" type="button" data-target-view="analysis"><span class="home-action-icon"><i data-lucide="chart-column"></i></span><span class="home-action-copy"><span>Analyse spending</span><small>Compare trends</small></span></button>
+            <button class="home-action" type="button" data-target-view="account"><span class="home-action-icon"><i data-lucide="user-cog"></i></span><span class="home-action-copy"><span>Manage account</span><small>Sync and safety tools</small></span></button>
+            <button class="home-action" type="button" data-target-view="settings"><span class="home-action-icon"><i data-lucide="sliders-horizontal"></i></span><span class="home-action-copy"><span>Settings</span><small>People and categories</small></span></button>
           </div>
         </div>
       </div>
       <div class="card" data-section="auth">
         <div class="card-header"><div class="card-title" id="accountCardTitle">Sign in</div><div class="chev">▸</div></div>
         <div class="card-content">
-          <div id="authMessage" style="display:none;padding:12px;border-radius:12px;margin-bottom:12px"></div>
+          <div id="authMessage" style="display:none;padding:12px;border-radius:8px;margin-bottom:12px"></div>
           <div class="account-section" id="accountLoginSection">
             <div class="account-section-title" id="accountSectionTitle">Sign in</div>
             <div class="row">
@@ -285,7 +279,7 @@
         </div>
         <div class="card-content">
           <div class="row" style="justify-content:space-between">
-            <div class="muted">Tap 🗑️ to remove a line</div>
+            <div class="muted expense-help">Tap a row to view or edit. Use x to remove.</div>
           </div>
           <div id="expensePayerTabs" class="filter-tabs"></div>
           <div id="duplicateReview" class="duplicate-review" style="display:none"></div>
@@ -338,6 +332,10 @@
                 <option value="compare-years">Compare years</option>
               </select>
             </div>
+            <div class="col" style="flex:1;min-width:160px">
+              <label for="analysisPerson">Person</label>
+              <select id="analysisPerson"></select>
+            </div>
             <div class="col analysis-compare-control" style="flex:1;min-width:160px;display:none">
               <label for="analysisCompareA">Compare</label>
               <select id="analysisCompareA"></select>
@@ -352,7 +350,7 @@
         </div>
       </div>
 
-      <div class="footer">stuartscottAI</div>
+      <div class="bottom-meta"><div class="footer"><strong>Family Accounts</strong><span>Designed and Managed by 3P Digital</span></div><div class="status-panel"><span id="modeBadge">Local storage</span><span class="status-dot">•</span><span id="cloudSyncStatus">Cloud: not signed in</span><span class="status-dot">•</span><span>Last edited: <span id="lastEdited">—</span></span></div></div>
     </div>
   </div>
 
@@ -372,6 +370,6 @@
     </div>
   </div>
 
-  <script defer src="js/app.js?v=20260506-1"></script>
+  <script defer src="js/app.js?v=20260506-6"></script>
 </body>
 </html>

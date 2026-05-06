@@ -4,7 +4,7 @@
     const menuToggle = document.getElementById('menuToggle');
     const mobileMenuSignInBtn = document.getElementById('mobileMenuSignInBtn');
     const mobileMenuSignOutBtn = document.getElementById('mobileMenuSignOutBtn');
-    const homeMonthLabel = document.getElementById('homeMonthLabel');
+    const homeMonthInput = document.getElementById('homeMonthInput');
     const homeMonthlyTotal = document.getElementById('homeMonthlyTotal');
     const homeEntryCount = document.getElementById('homeEntryCount');
     const modeBadge = document.getElementById('modeBadge');
@@ -87,6 +87,7 @@
 
     // Analysis
     const analysisView = document.getElementById('analysisView');
+    const analysisPerson = document.getElementById('analysisPerson');
     const analysisCompareA = document.getElementById('analysisCompareA');
     const analysisCompareB = document.getElementById('analysisCompareB');
     const analysisSummary = document.getElementById('analysisSummary');
@@ -188,7 +189,7 @@
     }
     function keyFor(month){ return `famacct:${month}` }
     function defaultData(){
-      return {expenses:[], lastEdited: new Date().toISOString()};
+      return {expenses:[], lastEdited: new Date().toISOString(), settledUp:false};
     }
     function normalizeMonthKey(month){
       const raw = String(month || '').trim();
@@ -214,6 +215,7 @@
       }
       const safe = (payload && typeof payload === 'object') ? { ...payload } : {};
       safe.expenses = Array.isArray(safe.expenses) ? safe.expenses : [];
+      safe.settledUp = !!safe.settledUp;
       if(!safe.lastEdited){ safe.lastEdited = new Date().toISOString(); }
       return safe;
     }
@@ -618,9 +620,9 @@
         authMessage.style.color = '#7f1d1d';
         authMessage.style.border = '1px solid #fca5a5';
       } else {
-        authMessage.style.background = '#eff6ff';
-        authMessage.style.color = '#1e3a8a';
-        authMessage.style.border = '1px solid #bfdbfe';
+        authMessage.style.background = '#d7f4f1';
+        authMessage.style.color = '#0d3f3b';
+        authMessage.style.border = '1px solid #9adbd5';
       }
       // Auto-hide after 8 seconds for success/info messages
       if(type !== 'error'){
@@ -1101,7 +1103,85 @@
       // Display-only summary: average share of expenses split between more than one person.
       const n = people.length || 1;
       const share = round2((sharedTotal||0)/n);
-      return {share, balances, transfers};
+      return {share, balances, transfers, paid, owed, sharedTotal};
+    }
+
+    function personSpendSummary(expenses, person){
+      let totalPaid = 0;
+      let personalPaid = 0;
+      let sharedPaid = 0;
+      let sharedOwed = 0;
+      for(const e of (expenses || [])){
+        const amount = +e.amount || 0;
+        const payer = e.payer || e.person || '';
+        const splits = e.splits || {[payer]:100};
+        const activeSplitPeople = Object.entries(splits).filter(([_, pct]) => (+pct || 0) > 0);
+        const isShared = activeSplitPeople.length > 1;
+        if(payer === person){
+          totalPaid = round2(totalPaid + amount);
+          if(isShared) sharedPaid = round2(sharedPaid + amount);
+          else personalPaid = round2(personalPaid + amount);
+        }
+        if(isShared && person in splits){
+          sharedOwed = round2(sharedOwed + amount * ((+splits[person] || 0) / 100));
+        }
+      }
+      const outgoingAfterSettlement = round2(personalPaid + sharedOwed);
+      return { totalPaid, personalPaid, sharedPaid, sharedOwed, outgoingAfterSettlement };
+    }
+
+    function sharedExpenseTotal(expenses){
+      return (expenses || []).reduce((sum, expense) => {
+        const payer = expense.payer || expense.person || '';
+        const splits = expense.splits || {[payer]:100};
+        const activePeople = Object.values(splits).filter(pct => (+pct || 0) > 0).length;
+        return activePeople > 1 ? round2(sum + (+expense.amount || 0)) : sum;
+      }, 0);
+    }
+
+    function summarizeForAnalysis(expenses, person){
+      const all = !person || person === '__all';
+      if(all){
+        const summary = summarizeExpenses(expenses);
+        return {
+          ...summary,
+          sharedCost: sharedExpenseTotal(expenses),
+          totalPaid: summary.total,
+          individualSpend: summary.total,
+          personalPaid: summary.total
+        };
+      }
+      const categoryTotals = {};
+      let count = 0;
+      for(const expense of (expenses || [])){
+        const amount = +expense.amount || 0;
+        const payer = expense.payer || expense.person || '';
+        const splits = expense.splits || {[payer]:100};
+        const activePeople = Object.values(splits).filter(pct => (+pct || 0) > 0).length;
+        const category = expense.category || 'Uncategorised';
+        let allocated = 0;
+        if(activePeople > 1){
+          allocated = round2(amount * ((+splits[person] || 0) / 100));
+        } else if(payer === person){
+          allocated = amount;
+        }
+        if(allocated > 0){
+          categoryTotals[category] = round2((categoryTotals[category] || 0) + allocated);
+          count += 1;
+        }
+      }
+      const personSummary = personSpendSummary(expenses, person);
+      return {
+        total: personSummary.outgoingAfterSettlement,
+        count,
+        average: count ? round2(personSummary.outgoingAfterSettlement / count) : 0,
+        categoryTotals,
+        payerTotals: {[person]: personSummary.totalPaid},
+        sharedCost: personSummary.sharedOwed,
+        totalPaid: personSummary.totalPaid,
+        individualSpend: personSummary.outgoingAfterSettlement,
+        personalPaid: personSummary.personalPaid
+      };
     }
 
     function renderPeopleCats(){
@@ -1293,7 +1373,9 @@
     function renderSettlements(){
       const {share, balances, transfers} = computeSettlements();
       if(!(fileData.people||[]).length){ settlements.innerHTML = '<div class="muted">Add people first.</div>'; return; }
-      let html = '<div class="row"><div>Equal share per person (based on splits): <strong>'+euro(share)+'</strong></div></div>';
+      let html = '<label class="settled-toggle"><input id="settledUpToggle" type="checkbox" '+(data.settledUp ? 'checked' : '')+' /> This month has been settled up</label>';
+      html += '<div class="note">'+(data.settledUp ? "Settled: analysis uses each person's final outgoing after transfers." : 'Not settled yet: analysis still shows what each person paid and what they owe.')+'</div>';
+      html += '<div class="row"><div>Equal share per person (based on splits): <strong>'+euro(share)+'</strong></div></div>';
       html += '<table><thead><tr><th>Person</th><th>Balance (positive = others owe them, negative = they owe others)</th></tr></thead><tbody>';
       for(const b of balances){
         const cls = b.balance>=0? 'ok' : 'bad';
@@ -1308,6 +1390,14 @@
         html += '</tbody></table>';
       }
       settlements.innerHTML = html;
+      const settledToggle = document.getElementById('settledUpToggle');
+      if(settledToggle){
+        settledToggle.addEventListener('change', async () => {
+          data.settledUp = settledToggle.checked;
+          await save();
+          renderAll();
+        });
+      }
     }
     function escapeHtml(value){
       return String(value || '').replace(/[<>&"]/g, char => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;'}[char]));
@@ -1459,7 +1549,7 @@
       renderAll();
     }
     function renderHome(){
-      if(homeMonthLabel) homeMonthLabel.textContent = monthLabel(monthEl.value);
+      if(homeMonthInput && homeMonthInput.value !== monthEl.value) homeMonthInput.value = monthEl.value;
       const expenses = data?.expenses || [];
       const total = expenses.reduce((sum, expense) => round2(sum + (+expense.amount || 0)), 0);
       if(homeMonthlyTotal) homeMonthlyTotal.textContent = euro(round2(total));
@@ -1472,7 +1562,7 @@
     function sectionsForView(view){
       if(!currentUser) return ['auth'];
       const map = {
-        home: ['home', 'month'],
+        home: ['home'],
         add: ['month', 'add-expenses'],
         review: ['month', 'all-expenses'],
         settle: ['month', 'totals-people', 'settlements'],
@@ -1741,6 +1831,24 @@
         '<div class="analysis-metric"><div class="muted">'+metric.label+'</div><div class="big">'+metric.value+'</div></div>'
       )).join('');
     }
+    function renderAnalysisPersonOptions(){
+      if(!analysisPerson) return;
+      const people = fileData.people || [];
+      const previous = analysisPerson.value;
+      analysisPerson.innerHTML = '';
+      const allOption = document.createElement('option');
+      allOption.value = '__all';
+      allOption.textContent = 'All';
+      analysisPerson.appendChild(allOption);
+      for(const person of people){
+        const option = document.createElement('option');
+        option.value = person;
+        option.textContent = person;
+        analysisPerson.appendChild(option);
+      }
+      if(previous === '__all' || people.includes(previous)) analysisPerson.value = previous;
+      else analysisPerson.value = '__all';
+    }
     function setCompareOptions(options){
       const controls = document.querySelectorAll('.analysis-compare-control');
       const isCompare = analysisView && (analysisView.value === 'compare-months' || analysisView.value === 'compare-years');
@@ -1773,18 +1881,26 @@
       const monthRows = getAnalysisMonthRows();
       const years = getAvailableYears(monthRows.map(row => row.month));
       const view = analysisView.value || 'month';
-      const allSummary = summarizeExpenses(monthRows.flatMap(row => row.data.expenses || []));
       const selectedMonth = normalizeMonthKey(monthEl.value);
       const currentMonth = monthRows.find(row => row.month === selectedMonth) || { month:selectedMonth, data:data || defaultData() };
-      const currentSummary = summarizeExpenses(currentMonth.data.expenses || []);
+      renderAnalysisPersonOptions();
+      const selectedPerson = analysisPerson?.value || '__all';
+      const isAllPeople = selectedPerson === '__all';
+      const currentSummary = summarizeForAnalysis(currentMonth.data.expenses || [], selectedPerson);
+      const allSummary = summarizeForAnalysis(monthRows.flatMap(row => row.data.expenses || []), selectedPerson);
+      const scopeLabel = isAllPeople ? 'All people' : selectedPerson;
 
       if(view !== 'compare-months' && view !== 'compare-years') setCompareOptions([]);
 
       if(view === 'month'){
-        renderMetricCards([
-          { label: monthLabel(selectedMonth), value: euro(currentSummary.total) },
-          { label: 'Entries', value: String(currentSummary.count) },
-          { label: 'Average entry', value: euro(currentSummary.average) }
+        renderMetricCards(isAllPeople ? [
+          { label: 'Total spend', value: euro(currentSummary.total) },
+          { label: 'Shared costs total', value: euro(currentSummary.sharedCost) },
+          { label: 'Entries', value: String(currentSummary.count) }
+        ] : [
+          { label: scopeLabel + ' individual spend', value: euro(currentSummary.individualSpend) },
+          { label: scopeLabel + ' shared cost', value: euro(currentSummary.sharedCost) },
+          { label: scopeLabel + ' total paid', value: euro(currentSummary.totalPaid) }
         ]);
         analysisTable.innerHTML = tableFromMap(currentSummary.categoryTotals, 'Category', 'Total');
         return;
@@ -1792,13 +1908,18 @@
 
       if(view === 'months'){
         const rows = monthRows.slice().reverse().map(row => {
-          const summary = summarizeExpenses(row.data.expenses || []);
+          const summary = summarizeForAnalysis(row.data.expenses || [], selectedPerson);
           return [monthLabel(row.month), euro(summary.total), String(summary.count), euro(summary.average)];
         });
-        renderMetricCards([
+        renderMetricCards(isAllPeople ? [
           { label: 'All months total', value: euro(allSummary.total) },
+          { label: 'Shared costs total', value: euro(allSummary.sharedCost) },
           { label: 'Months with data', value: String(monthRows.length) },
           { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.total / monthRows.length) : 0) }
+        ] : [
+          { label: scopeLabel + ' total', value: euro(allSummary.individualSpend) },
+          { label: scopeLabel + ' shared cost', value: euro(allSummary.sharedCost) },
+          { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.individualSpend / monthRows.length) : 0) }
         ]);
         analysisTable.innerHTML = tableFromRows(rows, ['Month', 'Total', 'Entries', 'Avg entry']);
         return;
@@ -1814,13 +1935,18 @@
       if(view === 'years'){
         const rows = Object.keys(yearGroups).sort((a,b)=>Number(b)-Number(a)).map(year => {
           const expenses = yearGroups[year].flatMap(row => row.data.expenses || []);
-          const summary = summarizeExpenses(expenses);
+          const summary = summarizeForAnalysis(expenses, selectedPerson);
           return [year, euro(summary.total), String(yearGroups[year].length), euro(yearGroups[year].length ? round2(summary.total / yearGroups[year].length) : 0)];
         });
-        renderMetricCards([
+        renderMetricCards(isAllPeople ? [
           { label: 'All years total', value: euro(allSummary.total) },
+          { label: 'Shared costs total', value: euro(allSummary.sharedCost) },
           { label: 'Years with data', value: String(Object.keys(yearGroups).length) },
           { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.total / monthRows.length) : 0) }
+        ] : [
+          { label: scopeLabel + ' total', value: euro(allSummary.individualSpend) },
+          { label: scopeLabel + ' shared cost', value: euro(allSummary.sharedCost) },
+          { label: 'Average per month', value: euro(monthRows.length ? round2(allSummary.individualSpend / monthRows.length) : 0) }
         ]);
         analysisTable.innerHTML = tableFromRows(rows, ['Year', 'Total', 'Months', 'Avg / month']);
         return;
@@ -1831,11 +1957,16 @@
         const year = years.includes(currentYear) ? currentYear : (years[0] || currentYear);
         const cutoffMonth = year === currentYear ? thisMonthValue() : `${year}-12`;
         const ytdRows = monthRows.filter(row => row.month.startsWith(year + '-') && row.month <= cutoffMonth);
-        const summary = summarizeExpenses(ytdRows.flatMap(row => row.data.expenses || []));
-        renderMetricCards([
+        const summary = summarizeForAnalysis(ytdRows.flatMap(row => row.data.expenses || []), selectedPerson);
+        renderMetricCards(isAllPeople ? [
           { label: year + ' total', value: euro(summary.total) },
+          { label: 'Shared costs total', value: euro(summary.sharedCost) },
           { label: 'Months included', value: String(ytdRows.length) },
           { label: 'Average per month', value: euro(ytdRows.length ? round2(summary.total / ytdRows.length) : 0) }
+        ] : [
+          { label: scopeLabel + ' YTD', value: euro(summary.individualSpend) },
+          { label: scopeLabel + ' shared cost', value: euro(summary.sharedCost) },
+          { label: 'Average per month', value: euro(ytdRows.length ? round2(summary.individualSpend / ytdRows.length) : 0) }
         ]);
         analysisTable.innerHTML = tableFromMap(summary.categoryTotals, 'Category', 'YTD total');
         return;
@@ -1843,7 +1974,7 @@
 
       if(view === 'averages'){
         const categoryAverages = {};
-        const categoryTotals = sumMaps(monthRows.map(row => summarizeExpenses(row.data.expenses || []).categoryTotals));
+        const categoryTotals = sumMaps(monthRows.map(row => summarizeForAnalysis(row.data.expenses || [], selectedPerson).categoryTotals));
         for(const [category, total] of Object.entries(categoryTotals)){
           categoryAverages[category] = monthRows.length ? round2(total / monthRows.length) : 0;
         }
@@ -1861,7 +1992,7 @@
         setCompareOptions(options);
         const a = monthRows.find(row => row.month === analysisCompareA.value);
         const b = monthRows.find(row => row.month === analysisCompareB.value);
-        renderComparison(a?.data?.expenses || [], b?.data?.expenses || [], monthLabel(analysisCompareA.value), monthLabel(analysisCompareB.value));
+        renderComparison(a?.data?.expenses || [], b?.data?.expenses || [], monthLabel(analysisCompareA.value), monthLabel(analysisCompareB.value), selectedPerson);
         return;
       }
 
@@ -1870,12 +2001,12 @@
         setCompareOptions(options);
         const aExpenses = (yearGroups[analysisCompareA.value] || []).flatMap(row => row.data.expenses || []);
         const bExpenses = (yearGroups[analysisCompareB.value] || []).flatMap(row => row.data.expenses || []);
-        renderComparison(aExpenses, bExpenses, analysisCompareA.value, analysisCompareB.value);
+        renderComparison(aExpenses, bExpenses, analysisCompareA.value, analysisCompareB.value, selectedPerson);
       }
     }
-    function renderComparison(aExpenses, bExpenses, aLabel, bLabel){
-      const a = summarizeExpenses(aExpenses);
-      const b = summarizeExpenses(bExpenses);
+    function renderComparison(aExpenses, bExpenses, aLabel, bLabel, person = '__all'){
+      const a = summarizeForAnalysis(aExpenses, person);
+      const b = summarizeForAnalysis(bExpenses, person);
       renderMetricCards([
         { label: aLabel || 'First', value: euro(a.total) },
         { label: bLabel || 'Second', value: euro(b.total) },
@@ -3272,9 +3403,11 @@
       updateCloudStatus();
       if(currentUser) activeView = 'home';
       refreshAppView();
+      if(window.lucide) window.lucide.createIcons();
       if(!batchRows.children.length) batchRows.appendChild(makeBatchRow());
 
       if(analysisView) analysisView.addEventListener('change', renderAverages);
+      if(analysisPerson) analysisPerson.addEventListener('change', renderAverages);
       if(analysisCompareA) analysisCompareA.addEventListener('change', renderAverages);
       if(analysisCompareB) analysisCompareB.addEventListener('change', renderAverages);
       if(menuToggle){
@@ -3307,6 +3440,13 @@
         buildSplitSliders(quickSplitSliders);
         buildSplitSliders(batchSplitSliders);
       });
+      if(homeMonthInput){
+        homeMonthInput.addEventListener('change', () => {
+          if(!homeMonthInput.value || homeMonthInput.value === monthEl.value) return;
+          monthEl.value = homeMonthInput.value;
+          monthEl.dispatchEvent(new Event('change'));
+        });
+      }
 
       addPersonBtn.addEventListener('click', async ()=>{
         const v = personNameEl.value; personNameEl.value=''; await addPerson(v); personNameEl.focus();
