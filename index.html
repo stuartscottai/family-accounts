@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
   <title>Family Accounts</title>
-  <link rel="stylesheet" href="css/styles.css?v=20260507-10" />
+  <link rel="stylesheet" href="css/styles.css?v=20260507-16" />
 <link rel="manifest" href="manifest.webmanifest?v=20260507-6" />
 <meta name="theme-color" content="#00796f" />
 <link rel="icon" href="public/favicon-32.png?v=20260507-6" sizes="32x32" />
@@ -192,12 +192,12 @@
                 <div class="note">Tip: paste many numbers, one per line. Both "," and "." work as decimals.</div>
               </div>
             </div>
-            <div class="row">
-              <div class="col" style="width:180px">
+            <div class="row quick-date-note-row">
+              <div class="col quick-date-col">
                 <label for="quickDate">Date</label>
                 <input id="quickDate" type="date" />
               </div>
-              <div class="col" style="flex:1">
+              <div class="col quick-note-col">
                 <label>Note (optional, applied to all)</label>
                 <input id="quickNote" type="text" placeholder="e.g., supermarket run" />
               </div>
@@ -265,6 +265,10 @@
             <datalist id="categorySuggestions"></datalist>
             <div id="importPreview" class="import-preview" style="display:none"></div>
           </div>
+          <div class="workflow-nav">
+            <button class="btn ghost workflow-back" type="button" data-target-view="home"><span class="workflow-arrow"><i data-lucide="arrow-left"></i></span><span>Home</span></button>
+            <button class="btn workflow-next" type="button" data-target-view="review"><span>Review expenses</span><span class="workflow-arrow"><i data-lucide="arrow-right"></i></span></button>
+          </div>
         </div>
       </div>
 
@@ -295,6 +299,10 @@
               </tfoot>
             </table>
           </div>
+          <div class="workflow-nav">
+            <button class="btn ghost workflow-back" type="button" data-target-view="add"><span class="workflow-arrow"><i data-lucide="arrow-left"></i></span><span>Add expenses</span></button>
+            <button class="btn workflow-next" type="button" data-target-view="settle"><span>Settle up</span><span class="workflow-arrow"><i data-lucide="arrow-right"></i></span></button>
+          </div>
         </div>
       </div>
 
@@ -313,6 +321,10 @@
         <div class="card-content">
           <div id="settlements"></div>
           <div class="note">Balances are based on what each person paid minus what they owed from the chosen splits. Positive balances mean others owe them; negative balances mean they owe others.</div>
+          <div class="workflow-nav">
+            <button class="btn ghost workflow-back" type="button" data-target-view="review"><span class="workflow-arrow"><i data-lucide="arrow-left"></i></span><span>Review expenses</span></button>
+            <button class="btn workflow-next" type="button" data-target-view="analysis"><span>Analyse spending</span><span class="workflow-arrow"><i data-lucide="arrow-right"></i></span></button>
+          </div>
         </div>
       </div>
 
@@ -347,6 +359,10 @@
           </div>
           <div id="analysisSummary" class="analysis-summary"></div>
           <div id="analysisTable"></div>
+          <div class="workflow-nav">
+            <button class="btn ghost workflow-back" type="button" data-target-view="settle"><span class="workflow-arrow"><i data-lucide="arrow-left"></i></span><span>Settle up</span></button>
+            <button class="btn workflow-next" type="button" data-target-view="add"><span>Add expenses</span><span class="workflow-arrow"><i data-lucide="arrow-right"></i></span></button>
+          </div>
         </div>
       </div>
 

@@ -373,6 +373,13 @@
       font-weight:600;
       white-space:nowrap;
     }
+    [data-section="add-expenses"] .card-header{
+      gap:12px;
+    }
+    [data-section="add-expenses"] .card-header-meta{
+      margin-left:auto;
+      flex:0 0 auto;
+    }
     .chev{
       display:none;
       align-items:center;justify-content:center;
@@ -383,6 +390,17 @@
     .card-content{padding:10px 0 20px}
 
     .row{display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap}
+    .quick-date-note-row{
+      display:grid;
+      grid-template-columns:180px minmax(0, 1fr);
+      align-items:end;
+      gap:12px;
+    }
+    .quick-date-col,
+    .quick-note-col{
+      min-width:0;
+      width:100%;
+    }
     .row{padding:10px 0;border-radius:0;background:transparent}
     .row:nth-child(even){background:transparent}
     .col{display:flex;flex-direction:column;gap:6px}
@@ -450,6 +468,44 @@
     .btn.compact{
       padding:6px 10px;
       font-size:12px;
+    }
+    .workflow-nav{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      margin-top:18px;
+      padding-top:14px;
+      border-top:1px solid var(--border-soft);
+    }
+    .workflow-nav .btn{
+      flex:1 1 0;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
+      text-align:center;
+    }
+    .workflow-arrow{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      flex:0 0 24px;
+      width:24px;
+      height:24px;
+      border-radius:999px;
+      background:rgba(255, 255, 255, 0.18);
+      line-height:0;
+    }
+    .workflow-arrow svg{
+      width:15px;
+      height:15px;
+      display:block;
+      stroke-width:2.6;
+    }
+    .workflow-back .workflow-arrow{
+      background:var(--accent-soft);
+      color:var(--accent);
     }
     .expense-row{
       cursor:pointer;
@@ -982,6 +1038,20 @@
         width:100%;
         gap:8px;
       }
+      [data-section="add-expenses"] .card-header{
+        align-items:center;
+        flex-wrap:nowrap;
+      }
+      [data-section="add-expenses"] .card-header-meta{
+        width:auto;
+        margin-left:auto;
+        gap:0;
+      }
+      [data-section="add-expenses"] .monthly-total-pill{
+        min-height:26px;
+        padding:3px 8px;
+        font-size:11px;
+      }
       .card-header-meta .btn{
         flex:1 1 auto;
       }
@@ -1102,11 +1172,34 @@
         font-weight:700;
       }
       .row{gap:8px;padding:8px 0}
+      .quick-date-note-row{
+        grid-template-columns:minmax(118px, 0.42fr) minmax(0, 1fr);
+        gap:8px;
+        padding:8px 0;
+        align-items:end;
+      }
+      .quick-date-col label,
+      .quick-note-col label{
+        min-height:auto;
+        display:block;
+        line-height:1.25;
+        margin-bottom:6px;
+      }
       .expense-help{
         font-size:11px;
         margin:0 0 8px;
       }
       .btn{padding:9px 11px;font-size:var(--font-sm)}
+      .workflow-nav{
+        margin-top:14px;
+        padding-top:12px;
+        gap:8px;
+      }
+      .workflow-nav .btn{
+        padding:9px 8px;
+        white-space:normal;
+        line-height:1.2;
+      }
       input[type="text"],input[type="email"],input[type="password"],input[type="number"],select,textarea,input[type="month"]{
         min-height:42px;
         padding:8px 10px;
@@ -1129,19 +1222,19 @@
       #expensesTable th:nth-child(2),
       #expensesTable td:nth-child(2),
       #expensesTable th:nth-child(3),
-      #expensesTable td:nth-child(3),
-      #expensesTable thead th:nth-child(4),
-      #expensesTable tbody td:nth-child(4){
+      #expensesTable td:nth-child(3){
         display:none;
       }
+      #expensesTable th:nth-child(4),
+      #expensesTable td:nth-child(4){width:24%}
       #expensesTable th:nth-child(5),
-      #expensesTable td:nth-child(5){width:44%}
+      #expensesTable td:nth-child(5){width:30%}
       #expensesTable th:nth-child(6),
-      #expensesTable td:nth-child(6){width:20%;white-space:nowrap}
+      #expensesTable td:nth-child(6){width:17%;white-space:nowrap}
       #expensesTable th:nth-child(7),
-      #expensesTable td:nth-child(7){width:26%}
+      #expensesTable td:nth-child(7){width:21%}
       #expensesTable th:nth-child(8),
-      #expensesTable td:nth-child(8){width:10%;text-align:center}
+      #expensesTable td:nth-child(8){width:8%;text-align:center}
       #expensesTable tfoot td:nth-child(4),
       #expensesTable tfoot td:nth-child(6){
         font-size:11px;
