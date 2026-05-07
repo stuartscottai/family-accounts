@@ -34,7 +34,13 @@
     }
 
     *{box-sizing:border-box;margin:0;padding:0}
-    html,body{height:100%;scroll-behavior:smooth}
+    html{
+      height:100%;
+      scroll-behavior:smooth;
+      scrollbar-gutter:stable;
+      overflow-y:scroll;
+    }
+    body{min-height:100%}
     body.dark{
       --bg:#071817;
       --surface:#0d2422;
@@ -79,20 +85,32 @@
 
     /* Header */
     .header{
-      display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;
+      position:sticky;
+      top:0;
+      z-index:50;
+      display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:nowrap;
       padding:8px 0 14px;margin-bottom:8px;
-      background:transparent;
+      background:var(--bg);
       border:0;
       border-bottom:1px solid var(--border-soft);
       border-radius:0;
     }
     .title{
       order:1;
-      font-size:var(--font-lg);font-weight:800;
-      color:var(--text);
       display:flex;align-items:center;gap:10px;
-      flex:0 0 auto;
+      flex:0 1 auto;
+      min-width:0;
     }
+    .brand-initial{color:var(--accent)}
+    .brand-lockup{
+      display:block;
+      width:min(270px, calc(100vw - 136px));
+      max-width:100%;
+      height:auto;
+    }
+    .brand-lockup-dark{display:none}
+    body.dark .brand-lockup-light{display:none}
+    body.dark .brand-lockup-dark{display:block}
     .logo{
       width:32px;height:32px;
       border-radius:8px;
@@ -153,7 +171,7 @@
       display:flex;
       gap:4px;
       flex-wrap:nowrap;
-      flex:1 1 360px;
+      flex:0 1 auto;
       justify-content:flex-end;
       width:auto;
       margin-bottom:0;
@@ -198,6 +216,15 @@
       display:flex;
       flex-direction:column;
       justify-content:center;
+      align-items:center;
+      text-align:center;
+    }
+    .home-summary .muted,
+    .home-month-picker label{
+      font-size:var(--font-sm);
+      font-weight:800;
+      width:100%;
+      text-align:center;
     }
     .home-month-picker label{
       margin-bottom:6px;
@@ -210,6 +237,8 @@
       font-size:var(--font-lg);
       font-weight:800;
       min-height:0;
+      width:100%;
+      text-align:center;
     }
     .home-month-picker input:focus{
       box-shadow:none;
@@ -238,18 +267,18 @@
       font-weight:700;
       text-align:center;
       cursor:pointer;
-      box-shadow:none;
+      box-shadow:0 12px 26px rgba(0, 67, 62, 0.10);
       transition:transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
     }
     .home-action:hover{
       transform:translateY(-2px);
       border-color:var(--accent);
-      box-shadow:var(--shadow-soft);
+      box-shadow:0 18px 36px rgba(0, 67, 62, 0.16);
     }
     .home-action.primary{
-      background:var(--accent);
-      color:white;
-      border-color:var(--accent);
+      background:var(--surface);
+      color:var(--text);
+      border-color:var(--accent-soft);
     }
     .home-action-icon{
       width:88px;
@@ -268,8 +297,8 @@
       stroke-width:2.05;
     }
     .home-action.primary .home-action-icon{
-      background:rgba(255, 255, 255, 0.18);
-      color:white;
+      background:var(--accent-soft);
+      color:var(--accent);
     }
     .home-action-copy{
       display:flex;
@@ -289,7 +318,7 @@
       line-height:1.25;
     }
     .home-action.primary .home-action-copy small{
-      color:rgba(255, 255, 255, 0.78);
+      color:var(--text-muted);
     }
     .account-section{
       padding:16px 0;
@@ -871,8 +900,9 @@
     /* Mobile Optimizations */
     @media (max-width: 640px) {
       .wrap{padding:10px 14px}
-      .header{padding:8px 0 10px;margin-bottom:4px}
-      .title{font-size:17px;order:1;gap:8px}
+      .header{padding:8px 0 10px;margin-bottom:4px;flex-wrap:wrap}
+      .title{order:1;gap:8px}
+      .brand-lockup{width:min(250px, calc(100vw - 128px))}
       .logo{width:28px;height:28px}
       .status-panel{
         font-size:10px;
@@ -966,22 +996,36 @@
         padding:8px 7px;
         min-width:0;
         min-height:76px;
+        overflow:hidden;
+        display:grid;
+        grid-template-rows:24px 1fr;
         align-items:center;
         text-align:center;
       }
+      .home-month-picker label,
+      .home-summary .muted{
+        align-self:center;
+        margin:0;
+      }
       .home-month-picker input{
         width:100%;
+        min-width:0;
+        max-width:100%;
+        box-sizing:border-box;
         font-size:12px;
         text-align:center;
+        align-self:center;
+        padding:0 4px;
       }
       .home-summary .muted{
-        font-size:9px;
+        font-size:var(--font-sm);
         line-height:1.2;
       }
       .home-summary .big{
         font-size:13px;
         line-height:1.2;
         overflow-wrap:anywhere;
+        align-self:center;
       }
       .home-actions{
         grid-template-columns:repeat(2, minmax(0, 1fr));
